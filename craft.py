@@ -2,8 +2,13 @@ class CraftItem:
 
     CRAFT_CONST = 3
 
-    def __init__(self, *loots: int | list | tuple, name: str = "Anonymous-Item") -> None:
+    def __init__(
+        self,
+        *loots: int | list | tuple,
+        name: str = "Anonymous-Item", only_eqv: bool = False
+    ) -> None:
         self.name: str = name
+        self.only_eqv = only_eqv
         self.loots: list[int] = []
         self.set_loots(*loots)
 
@@ -37,6 +42,8 @@ class CraftItem:
         return int(self) < int(other)
 
     def __str__(self) -> str:
+        if self.only_eqv:
+            return f"Big:{float(self):>7.2f}, Small:{int(self):>5}"
         return (
             f"{self.name:<20}\t"
             f"[{self.loots[0]:>3}, {self.loots[1]:>3}, {self.loots[2]:>3}];\t"

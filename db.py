@@ -156,7 +156,7 @@ class Dataset:
     def __enter__(self):
         self.conn = sqlite3.connect(self.db_name)
         self.cursor = self.conn.cursor()
-        self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (self.table_name,))
+        self.cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (self.table_name,))
         table_exists = self.cursor.fetchone() is not None
         if not table_exists:
             if self.create_scheme is None:
@@ -246,7 +246,7 @@ class Dataset:
     @precheck_return([])
     def lquery_constrain(self, constrain_dict: dict) -> list[tuple]:
         assert self.cursor is not None
-        where = " AND ".join([i + "=?" for i in constrain_dict.keys()])
+        where = " AND ".join([i + " = ?" for i in constrain_dict.keys()])
         query = f"SELECT * FROM {self.table_name} WHERE {where}"
         self.cursor.execute(query, tuple(constrain_dict.values()))
         res = self.cursor.fetchall()
@@ -303,16 +303,31 @@ class Dataset:
         cols_str = ", ".join(f'"{k}"' for k in keys)
         placeholders = ", ".join(["?"] * len(keys))
         query = f"INSERT OR REPLACE INTO {self.table_name} ({cols_str}) VALUES ({placeholders})"
-
         try:
-            values_list = [
-                tuple(item.get(k) for k in keys) 
-                for item in items
-            ]
+            values_list = [tuple(item.get(k) for k in keys) for item in items]
         except AttributeError:
             logger.error(f"<{self.table_name}>: {items = } all elements must be dictionaries.")
             return False
-
         self.cursor.executemany(query, values_list)
         logger.info(f"<{self.table_name}>: {len(items)} item(s) stored")
         return True
+
+    def remove(self, delete_dict: dict) -> bool:
+        assert self.cursor is not None
+        if not delete_dict or len(delete_dict) == 0:
+            logger.warning(f"<{self.table_name}>: won't delete if not specified")
+            return False
+        where = " AND ".join([i + " = ?" for i in delete_dict.keys()])
+        query = f"DELETE FROM {self.table_name} WHERE {where}"
+        self.cursor.execute(query, tuple(delete_dict.values()))
+        logger.info(f"<{self.table_name}>: {delete_dict} deleted")
+        return True
+
+    def insert(self, item: dict) -> bool:
+        return self.store(item)
+
+    def update(self, item: dict) -> bool:
+        return self.store(item)
+
+    def delete(self, delete_dict: dict) -> bool:
+        return self.remove(delete_dict)

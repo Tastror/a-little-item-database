@@ -53,6 +53,11 @@ with Dataset(
     print(f"{dq_cons_2 = }")
     print()
 
+    db.remove({'tier1_count': 5})
+    dq_del = db.dquery_all()
+    print(f"{len(dq_del) = }")
+    print()
+
 print("--- no create here ---")
 with Dataset(
     "game.db", "starrail_materials_just_for_test",
