@@ -1,6 +1,6 @@
 from scheme.genshin import genshin_scheme, genshin_init_data
 from scheme.starrail import starrail_scheme, starrail_init_data
-from db import Dataset, Column, SQLITE_TYPE
+from db import Dataset, Column, VALUE
 
 
 START = "\n" * 2 + "=" * 50 + " "
@@ -18,7 +18,7 @@ with Dataset(
     print(f"{len(dq) = }")
     print(f"{dq[0] = }")
     print(f"{dq[1] = }")
-    db._add_column(Column("hello", SQLITE_TYPE.REAL))
+    db._add_column(Column("hello", VALUE.REAL))
     db._rename_column("hello", "hi")
     db._delete_column("hi")
     db._rename_table("genshin_materials_just_for_test2")

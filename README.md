@@ -1,4 +1,4 @@
-# Game Databse
+# A Little Item Database
 
 ## run
 

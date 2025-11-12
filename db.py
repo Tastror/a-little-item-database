@@ -5,14 +5,14 @@ from enum import Enum, auto
 from logger import logger
 
 
-class SQLITE_TYPE(Enum):
+class VALUE(Enum):
     NULL = auto()
     TEXT = auto()
     INTEGER = auto()
     REAL = auto()
     BLOB = auto()
 
-class CONSTRAIN_TYPE(Enum):
+class CONSTRAIN(Enum):
     PRIMARY_KEY = auto()
     UNIQUE = auto()
     CHECK = auto()
@@ -22,7 +22,7 @@ class CONSTRAIN_TYPE(Enum):
 class Column:
     def __init__(
         self,
-        name: str, type: SQLITE_TYPE,
+        name: str, type: VALUE,
         *,
         default: Any = None, not_null: bool = False,
         primary: bool = False, unique: bool = False,
@@ -64,7 +64,7 @@ class Column:
 class Constrain:
     def __init__(
         self,
-        constrain_type: CONSTRAIN_TYPE,
+        constrain_type: CONSTRAIN,
         _1: str | None = None,
         *,
         _2: str | None = None,
@@ -81,13 +81,13 @@ class Constrain:
         result = ""
         if self.give_name:
             result += f"CONSTRAINT {self.give_name} "
-        if self.constrain_type == CONSTRAIN_TYPE.PRIMARY_KEY:
+        if self.constrain_type == CONSTRAIN.PRIMARY_KEY:
             return result + f"PRIMARY KEY ({self._1})"
-        elif self.constrain_type == CONSTRAIN_TYPE.UNIQUE:
+        elif self.constrain_type == CONSTRAIN.UNIQUE:
             return result + f"UNIQUE ({self._1})"
-        elif self.constrain_type == CONSTRAIN_TYPE.CHECK:
+        elif self.constrain_type == CONSTRAIN.CHECK:
             return result + f"CHECK ({self._1})"
-        elif self.constrain_type == CONSTRAIN_TYPE.FOREIGN_KEY:
+        elif self.constrain_type == CONSTRAIN.FOREIGN_KEY:
             return result + f"FOREIGN KEY ({self._1}) REFERENCES {self._2}"
         else:
             raise NotImplementedError(f"{self.constrain_type} is not implement")

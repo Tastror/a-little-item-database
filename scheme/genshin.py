@@ -1,16 +1,16 @@
-from db import SQLITE_TYPE, CONSTRAIN_TYPE, Column, Constrain, Scheme
+from db import VALUE, CONSTRAIN, Column, Constrain, Scheme
 
 genshin_scheme = Scheme()
 genshin_scheme.add_columns([
-    Column("country", SQLITE_TYPE.TEXT),
-    Column("open_day", SQLITE_TYPE.INTEGER),
-    Column("item_name", SQLITE_TYPE.INTEGER),
-    Column("tier1_count", SQLITE_TYPE.INTEGER, default=0),
-    Column("tier2_count", SQLITE_TYPE.INTEGER, default=0),
-    Column("tier3_count", SQLITE_TYPE.INTEGER, default=0),
+    Column("country", VALUE.TEXT),
+    Column("open_day", VALUE.INTEGER),
+    Column("item_name", VALUE.TEXT),
+    Column("tier1_count", VALUE.INTEGER, default=0),
+    Column("tier2_count", VALUE.INTEGER, default=0),
+    Column("tier3_count", VALUE.INTEGER, default=0),
 ])
 genshin_scheme.add_constrain(
-    Constrain(CONSTRAIN_TYPE.PRIMARY_KEY, "country, open_day")
+    Constrain(CONSTRAIN.PRIMARY_KEY, "country, open_day")
 )
 
 genshin_init_data = [
