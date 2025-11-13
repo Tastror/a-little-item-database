@@ -18,9 +18,6 @@ class CraftItem:
             print("Warning: better to make the loots split by ',' instead of passing a tuple or list")
         else:
             self.loots = list(loots)  # type: ignore
-        while len(self.loots) < 3:
-            self.loots.append(0)
-        self.loots = self.loots[:3]
         for i, data in enumerate(self.loots):
             try: int(data)
             except: self.loots[i] = 0
@@ -47,8 +44,12 @@ class CraftItem:
     def __str__(self) -> str:
         if self.only_eqv:
             return f"{float(self):.2f} ({int(self)})"
+        loot_str = ""
+        for loot in self.loots:
+            loot_str += f"{loot:>3}, "
+        loot_str = loot_str[:-2]
         return (
             f"{self.name:<20}\t"
-            f"[{self.loots[0]:>3}, {self.loots[1]:>3}, {self.loots[2]:>3}];\t"
+            f"[{loot_str}];\t"
             f"(Eqv. Big:{float(self):>7.2f}, Small:{int(self):>5})"
         )

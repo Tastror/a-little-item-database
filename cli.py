@@ -66,7 +66,7 @@ class AppState:
         self.headers.append("eqv")
         for row in self.all_data:
             row["eqv"] = CraftItem(
-                row.get("tier1_count", 0), row.get("tier2_count", 0), row.get("tier3_count", 0),
+                *(list(row.values())[3:]),
                 name=row.get("item_name", ""), only_eqv=True
             )
         self.apply_filter_and_sort()
@@ -403,7 +403,10 @@ if __name__ == "__main__":
     
     create_scheme = None
     create_data = None
-    if table_name.startswith("genshin"):
+    if table_name.startswith("genshin_weapon"):
+        create_scheme = genshin.genshin_weapon_scheme
+        create_data = genshin.genshin_weapon_init_data
+    elif table_name.startswith("genshin"):
         create_scheme = genshin.genshin_scheme
         create_data = genshin.genshin_init_data
     elif table_name.startswith("starrail"):

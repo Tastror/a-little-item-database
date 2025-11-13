@@ -7,4 +7,5 @@ __pycache__
 uv.lock
 *.cmd
 !genshin_materials.cmd
+!genshin_weapon.cmd
 !starrail_materials.cmd

@@ -1,5 +1,3 @@
-from scheme.genshin import genshin_scheme, genshin_init_data
-from scheme.starrail import starrail_scheme, starrail_init_data
 from db import Dataset, Column, VALUE
 
 with Dataset(
@@ -8,6 +6,13 @@ with Dataset(
     dq = db.dquery_all()
     print(f"{dq = }")
     db._rename_table("genshin_materials_backup")
+
+with Dataset(
+    "game.db", "genshin_weapon",
+) as db:
+    dq = db.dquery_all()
+    print(f"{dq = }")
+    db._rename_table("genshin_weapon_backup")
 
 with Dataset(
     "game.db", "starrail_materials",
