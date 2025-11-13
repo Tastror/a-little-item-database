@@ -124,6 +124,8 @@ class TableApp:
         ])
         self.layout = Layout(root_container)
         self.app = Application(layout=self.layout, key_bindings=self.kb, full_screen=True, mouse_support=True)
+        self.app.timeoutlen = 0
+        self.app.ttimeoutlen = 0
         style_list = [
             ('header',         'bg:ansibrightblack fg:ansiwhite bold'),
             ('header.border',  'bg:ansibrightblack'),

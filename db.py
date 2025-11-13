@@ -2,7 +2,7 @@ import sqlite3
 from typing import Any
 from enum import Enum, auto
 
-from logger import logger
+from logger import logger # type: ignore
 
 
 class VALUE(Enum):
