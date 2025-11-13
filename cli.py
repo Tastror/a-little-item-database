@@ -57,6 +57,12 @@ class AppState:
             )
         self.apply_filter_and_sort()
 
+    def update(self, update_dict) -> bool:
+        with Dataset(self.db_file, self.table_name) as db:
+            res = db.update(update_dict)
+        self.load_data()
+        return res
+
     def apply_filter_and_sort(self):
         if self.filter_enabled:
             now = datetime.datetime.now()
@@ -102,6 +108,7 @@ class TableApp:
         self.kb = KeyBindings()
         self._setup_key_bindings()
         self.app = Application(Layout(Window(height=1)))
+        self.height_remain_for_other = 6
         self.table_frame = Frame(
             title=f"Table: {self.state.table_name}",
             body=HSplit(self._get_table_rows_layout(), padding=0)
@@ -146,7 +153,7 @@ class TableApp:
             layouts.append(Window(FormattedTextControl(" --- No data available --- ")))
             return layouts
         height, width = self.app.output.get_size()
-        visible_rows_count = height - 6
+        visible_rows_count = height - self.height_remain_for_other
         self.state.top_row_index = max(0, min(self.state.top_row_index, len(self.buffers) - 1))
         visible_buffers = self.buffers[self.state.top_row_index : self.state.top_row_index + visible_rows_count]
         for i, row_buffers in enumerate(visible_buffers):
@@ -160,7 +167,7 @@ class TableApp:
                     style = "class:cell.editing"
                 elif is_selected_cell:
                     style = "class:cell.selected"
-                is_readonly = self.state.headers[j].lower() in ['id', 'eqv']
+                is_readonly = self.state.headers[j].lower() in ['eqv']
                 if not is_readonly:
                     cell_windows.append(Window(
                         content=BufferControl(buffer=buf, focusable=True),
@@ -207,7 +214,7 @@ class TableApp:
 
     def _adjust_scroll(self):
         height, width = self.app.output.get_size()
-        visible_rows_count = height - 5
+        visible_rows_count = height - self.height_remain_for_other
         if self.state.selected_row_index < self.state.top_row_index:
             self.state.top_row_index = self.state.selected_row_index
         elif self.state.selected_row_index >= self.state.top_row_index + visible_rows_count:
@@ -281,29 +288,20 @@ class TableApp:
     def _move_cursor(self, dr, dc):
         new_row = self.state.selected_row_index + dr
         new_col = self.state.selected_col_index + dc
-
-        # 边界检查
         if 0 <= new_row < len(self.buffers):
             self.state.selected_row_index = new_row
         if 0 <= new_col < len(self.state.headers):
             self.state.selected_col_index = new_col
-
         self._adjust_scroll()
 
     def _start_editing(self):
-        # 检查是否为只读列
         header = self.state.headers[self.state.selected_col_index]
-        if header.lower() in ['id', 'eqv']:
-            # 可以在状态栏给个提示
-            self.state.info_text = f"'{header}' column is read-only."
+        if header.lower() in ['eqv']:
+            self.loggint_text = f"'{header}' column is read-only."
             self.app.invalidate()
             return
-
         self.state.is_editing = True
-
-        # 聚焦到选定单元格的 BufferControl 上
         target_buffer = self.buffers[self.state.selected_row_index][self.state.selected_col_index]
-        # 遍历布局找到对应的 BufferControl 并聚焦
         for w in self.app.layout.find_all_windows():
             if isinstance(w.content, BufferControl) and w.content.buffer == target_buffer:
                 self.app.layout.focus(w)
@@ -319,22 +317,12 @@ class TableApp:
 
     def _save_and_stop_editing(self):
         self.state.is_editing = False
-        new_text = self.buffers[self.state.selected_row_index][self.state.selected_col_index].text
-
-        header = self.state.headers[self.state.selected_col_index]
-        row_id = self.state.view_data[self.state.selected_row_index].get('id')
-
-        self.state.view_data[self.state.selected_row_index][header] = new_text
-        # 更新 all_data
-        for row in self.state.all_data:
-            if row.get('id') == row_id:
-                row[header] = new_text
-                break
-
-        update_payload = {'id': row_id, header: new_text}
-        with Dataset(self.state.db_file, self.state.table_name) as db:
-            db.update(update_payload)
-
+        update_dict = {}
+        for i, key in enumerate(self.state.headers):
+            if key in ['eqv']: continue
+            update_dict[key] = self.buffers[self.state.selected_row_index][i].text
+        res = self.state.update(update_dict)
+        self.loggint_text = f"update {res}: {update_dict}"
         self._update_layout()
 
     async def _background_updater(self):

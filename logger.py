@@ -2,7 +2,7 @@ import sys
 import logging
 import colorlog
 
-def setup_logger():
+def setup_logger(level=logging.ERROR):
 
     logger = logging.getLogger()
 
@@ -11,7 +11,7 @@ def setup_logger():
     # logging.WARNING,
     # logging.ERROR,
     # logging.CRITICAL
-    logger.setLevel(logging.INFO)
+    logger.setLevel(level)
     if logger.hasHandlers():
         return logger
     handler = colorlog.StreamHandler(sys.stdout)
