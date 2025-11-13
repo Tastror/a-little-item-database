@@ -49,8 +49,8 @@ with Dataset(
     print(db.head_name())
     for data in starrail_insert_data:
         may_have = db.dquery_constrain({
-            "country": data["country"],
-            "open_day": data["open_day"]
+            "path": data["path"],
+            "position": data["position"]
         })
         if len(may_have) == 1:
             data["id"] = may_have[0]["id"]
