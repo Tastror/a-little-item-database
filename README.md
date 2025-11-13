@@ -1,5 +1,9 @@
 # A Little Item Database
 
+## intro
+
+![demo-3](img/demo-3.png)
+
 ## run
 
 ```bash
@@ -20,3 +24,14 @@ or
 ```bash
 uv run test.py
 ```
+
+## appendix
+
+### change data
+
+![demo-1](img/demo-1.png)
+![demo-2](img/demo-2.png)
+
+### filter & sort
+
+![demo-3](img/demo-3.png)
