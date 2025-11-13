@@ -123,8 +123,7 @@ class AppState:
             self.view_data.sort(key=lambda row: row["eqv"])
             self.sort_text = "Sort: Eqv"
         elif self.sort_enabled == 2:
-            if "country" in self.headers and "open_day" in self.headers:
-                self.view_data.sort(key=lambda row: (row.get("country",""), str(row.get("open_day", ""))))
+            self.view_data.sort(key=lambda row: (row[self.headers[1]], str(row[self.headers[2]])))  # strip "id"
             self.sort_text = "Sort: Name"
         else:
             self.view_data.sort(key=lambda row: row["id"])
@@ -138,7 +137,7 @@ class TableApp:
     def __init__(self, state: AppState):
         self.state = state
         self.date_text = ""
-        self.loggint_text = ""
+        self.logging_text = ""
         self.buffers: list[list[Buffer]] = []
         self._update_buffers()
         self.kb = KeyBindings()
@@ -252,7 +251,7 @@ class TableApp:
 
 
     def _get_log_text(self):
-        return self.loggint_text
+        return self.logging_text
 
     def _update_layout(self):
         self.table_frame.body = HSplit(self._get_table_rows_layout(), padding=0)
@@ -344,7 +343,7 @@ class TableApp:
     def _start_editing(self):
         header = self.state.headers[self.state.selected_col_index]
         if header.lower() in ['id', 'eqv']:
-            self.loggint_text = f"'{header}' column is read-only."
+            self.logging_text = f"Edit: '{header}' column is read-only."
             self.app.invalidate()
             return
         self.state.is_editing = True
@@ -359,7 +358,7 @@ class TableApp:
         original_text = str(self.state.view_data[self.state.selected_row_index][self.state.headers[self.state.selected_col_index]])
         self.buffers[self.state.selected_row_index][self.state.selected_col_index].text = original_text
         self.state.is_editing = False
-        self.loggint_text = f"remain {original_text}"
+        self.logging_text = f"Remain: {original_text}"
         self._update_buffers()
         self._update_layout()
 
@@ -369,9 +368,13 @@ class TableApp:
         update_dict = {}
         old_data = self.state.view_data[self.state.selected_row_index][key]
         update_dict[key] = self.buffers[self.state.selected_row_index][self.state.selected_col_index].text
+        if str(old_data) == update_dict[key]:
+            self.logging_text = "Update: Not Change"
+            self._update_layout()
+            return
         res = self.state.update(self.buffers[self.state.selected_row_index][0].text, update_dict)
-        self.loggint_text = (
-            f"update {res}: "
+        self.logging_text = (
+            f"Update {res}: "
             f"{old_data} > {update_dict[key]}"
         )
         self._update_buffers()
