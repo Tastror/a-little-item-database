@@ -2,6 +2,7 @@ from db import VALUE, CONSTRAIN, Column, Constrain, Scheme
 
 genshin_scheme = Scheme()
 genshin_scheme.add_columns([
+    Column("id", VALUE.INTEGER, primary=True, autoincrement=True),
     Column("country", VALUE.TEXT),
     Column("open_day", VALUE.INTEGER),
     Column("item_name", VALUE.TEXT),
@@ -9,9 +10,9 @@ genshin_scheme.add_columns([
     Column("tier2_count", VALUE.INTEGER, default=0),
     Column("tier3_count", VALUE.INTEGER, default=0),
 ])
-genshin_scheme.add_constrain(
-    Constrain(CONSTRAIN.PRIMARY_KEY, "country, open_day")
-)
+# genshin_scheme.add_constrain(
+#     Constrain(CONSTRAIN.PRIMARY_KEY, "country, open_day")
+# )
 
 genshin_init_data = [
     {'country': 'Mondstadt',    'open_day': 1,      'item_name': 'Freedom',      },

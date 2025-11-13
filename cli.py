@@ -43,13 +43,13 @@ class AppState:
         self.all_data: list[dict[str, Any]] = []
 
         self.selected_row_index: int = 0
-        self.selected_col_index: int = 0
+        self.selected_col_index: int = 1  # strip "id"
         self.top_row_index: int = 0
         self.is_editing: bool = False
 
         self.has_filter: bool = self.table_name.startswith("genshin")
         self.filter_enabled: bool = False
-        self.sort_enabled: bool = False
+        self.sort_enabled: int = 0
         self.filter_text: str = ""
         self.sort_text: str = ""
         self.info_text: str = ""
@@ -71,9 +71,28 @@ class AppState:
             )
         self.apply_filter_and_sort()
 
-    def update(self, update_dict) -> bool:
+    def update(self, line_id, new_dict) -> bool:
         with Dataset(self.db_file, self.table_name) as db:
-            res = db.update(update_dict)
+            old_data = db.dquery_constrain({"id": line_id})[0]
+            old_data.update(new_dict)
+            res = db.insert_or_update(old_data)
+            # if do this, all data will be None (not NULL, why?)
+            # new_dict["id"] = line_id
+            # res = db.insert_or_update(new_dict)
+        self.load_data()
+        return res
+
+    # TODO: add it
+    def delete(self, old_dict) -> bool:
+        with Dataset(self.db_file, self.table_name) as db:
+            res = db.delete(old_dict)
+        self.load_data()
+        return res
+
+    # TODO: add it
+    def insert(self, new_dict) -> bool:
+        with Dataset(self.db_file, self.table_name) as db:
+            res = db.insert_or_update(new_dict)
         self.load_data()
         return res
 
@@ -100,12 +119,15 @@ class AppState:
             self.view_data = self.all_data[:]
             self.info_text = ""
 
-        if self.sort_enabled and "eqv" in self.headers:
+        if self.sort_enabled == 1:
             self.view_data.sort(key=lambda row: row["eqv"])
-            self.sort_text = "Sort: By EQV"
-        else:
+            self.sort_text = "Sort: Eqv"
+        elif self.sort_enabled == 2:
             if "country" in self.headers and "open_day" in self.headers:
                 self.view_data.sort(key=lambda row: (row.get("country",""), str(row.get("open_day", ""))))
+            self.sort_text = "Sort: Name"
+        else:
+            self.view_data.sort(key=lambda row: row["id"])
             self.sort_text = "Sort: Default"
         if self.selected_row_index >= len(self.view_data):
             self.selected_row_index = max(0, len(self.view_data) - 1)
@@ -125,11 +147,11 @@ class TableApp:
         self.height_remain_for_other = 6
         self.table_frame = Frame(
             title=f"Table: {self.state.table_name}",
-            body=HSplit(self._get_table_rows_layout(), padding=0)
+            body=HSplit(self._get_table_rows_layout(), padding=0),
         )
-        self.status_bar = Window(height=1, content=FormattedTextControl(self._get_status_text), style="bg:#000080 #ffffff")
-        self.help_bar = Window(height=1, content=FormattedTextControl(self._get_help_text), style="bg:#000040 #ffffff")
-        self.logging_bar = Window(height=1, content=FormattedTextControl(self._get_log_text), style="bg:#000080 #ffffff")
+        self.status_bar = Window(height=1, content=FormattedTextControl(self._get_status_text))
+        self.help_bar = Window(height=1, content=FormattedTextControl(self._get_help_text))
+        self.logging_bar = Window(height=1, content=FormattedTextControl(self._get_log_text))
         root_container = HSplit([
             self.table_frame,
             self.status_bar,
@@ -141,12 +163,12 @@ class TableApp:
         self.app.timeoutlen = 0
         self.app.ttimeoutlen = 0
         style_list = [
-            ('header',         'bg:ansibrightblack fg:ansiwhite bold'),
+            ('header',         'bg:ansibrightblack fg:#ffffff bold'),
             ('header.border',  'bg:ansibrightblack'),
-            ('cell',           'bg:ansigray'),
+            ('cell',           'bg:ansigray fg:#222222'),
             ('cell.border',    'bg:ansigray'),
-            ('cell.selected',  'bg:ansiblue fg:ansiwhite'),
-            ('cell.editing',   'bg:ansigreen fg:ansiblack'),
+            ('cell.selected',  'bg:ansiblue fg:#ffffff'),
+            ('cell.editing',   'bg:ansigreen fg:#ffffff'),
         ]
         self.app.style = Style(style_list)
 
@@ -166,7 +188,7 @@ class TableApp:
         layouts.append(VSplit([
             Window(
                 FormattedTextControl(f"{h}"), style="class:header", height=1, ignore_content_width=True
-            ) for h in self.state.headers
+            ) for h in self.state.headers[1:]  # strip id
         ], padding=1, padding_style="class:header.border"))
         if not self.buffers:
             layouts.append(Window(FormattedTextControl(" --- No data available --- ")))
@@ -180,6 +202,7 @@ class TableApp:
             is_selected_row = (current_row_index == self.state.selected_row_index)
             cell_windows = []
             for j, buf in enumerate(row_buffers):
+                if j == 0: continue  # strip "id"
                 is_selected_cell = is_selected_row and (j == self.state.selected_col_index)
                 style = "class:cell"
                 if self.state.is_editing and is_selected_cell:
@@ -209,7 +232,7 @@ class TableApp:
         filter_data = f" {self.state.filter_text} |" if self.state.has_filter else ""
         left_text = (
             f"{filter_data} {self.state.sort_text} | "
-            f"Rows: {showing}/{total} | At ({self.state.selected_row_index}, {self.state.selected_col_index})"
+            f"Rows: {showing}/{total} | At ({self.state.selected_row_index}, {self.state.selected_col_index - 1})"  # -1: strip "id"
         )
         right_text = f" {self.date_text} {self.state.info_text} "
 
@@ -281,7 +304,7 @@ class TableApp:
 
         @kb_nav.add("s")
         def _(event):
-            self.state.sort_enabled = not self.state.sort_enabled
+            self.state.sort_enabled = (self.state.sort_enabled + 1) % 3
             self.state.apply_filter_and_sort()
             self._update_buffers()
             self._update_layout()
@@ -314,13 +337,13 @@ class TableApp:
         new_col = self.state.selected_col_index + dc
         if 0 <= new_row < len(self.buffers):
             self.state.selected_row_index = new_row
-        if 0 <= new_col < len(self.state.headers):
+        if 0 <= new_col - 1 < len(self.state.headers) - 1:  # -1: strip "id"
             self.state.selected_col_index = new_col
         self._adjust_scroll()
 
     def _start_editing(self):
         header = self.state.headers[self.state.selected_col_index]
-        if header.lower() in ['eqv']:
+        if header.lower() in ['id', 'eqv']:
             self.loggint_text = f"'{header}' column is read-only."
             self.app.invalidate()
             return
@@ -333,20 +356,25 @@ class TableApp:
                 break
 
     def _cancel_editing(self):
-        original_text = str(self.state.view_data[self.state.selected_row_index].get(self.state.headers[self.state.selected_col_index], ""))
+        original_text = str(self.state.view_data[self.state.selected_row_index][self.state.headers[self.state.selected_col_index]])
         self.buffers[self.state.selected_row_index][self.state.selected_col_index].text = original_text
         self.state.is_editing = False
         self.loggint_text = f"remain {original_text}"
+        self._update_buffers()
         self._update_layout()
 
     def _save_and_stop_editing(self):
         self.state.is_editing = False
+        key = self.state.headers[self.state.selected_col_index]
         update_dict = {}
-        for i, key in enumerate(self.state.headers):
-            if key in ['eqv']: continue
-            update_dict[key] = self.buffers[self.state.selected_row_index][i].text
-        res = self.state.update(update_dict)
-        self.loggint_text = f"update {res}: {update_dict}"
+        old_data = self.state.view_data[self.state.selected_row_index][key]
+        update_dict[key] = self.buffers[self.state.selected_row_index][self.state.selected_col_index].text
+        res = self.state.update(self.buffers[self.state.selected_row_index][0].text, update_dict)
+        self.loggint_text = (
+            f"update {res}: "
+            f"{old_data} > {update_dict[key]}"
+        )
+        self._update_buffers()
         self._update_layout()
 
     async def _background_updater(self):

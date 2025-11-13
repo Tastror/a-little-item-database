@@ -2,6 +2,7 @@ from db import VALUE, CONSTRAIN, Column, Constrain, Scheme
 
 starrail_scheme = Scheme()
 starrail_scheme.add_columns([
+    Column("id", VALUE.INTEGER, primary=True, autoincrement=True),
     Column("path", VALUE.TEXT),
     Column("position", VALUE.INTEGER),
     Column("item_name", VALUE.TEXT),
@@ -9,9 +10,9 @@ starrail_scheme.add_columns([
     Column("tier2_count", VALUE.INTEGER, default=0),
     Column("tier3_count", VALUE.INTEGER, default=0),
 ])
-starrail_scheme.add_constrain(
-    Constrain(CONSTRAIN.PRIMARY_KEY, "path, position")
-)
+# starrail_scheme.add_constrain(
+#     Constrain(CONSTRAIN.PRIMARY_KEY, "path, position")
+# )
 
 starrail_init_data = [
     {'path': 'Destruction',     'position': 1,      'item_name': 'Worldbreaker Blade',      },

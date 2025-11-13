@@ -27,6 +27,7 @@ class Column:
         default: Any = None, not_null: bool = False,
         primary: bool = False, unique: bool = False,
         check: str | None = None, collate: str | None = None,
+        autoincrement: bool = False,
         foreign_key_ref: str | None = None,
     ):
         """
@@ -40,6 +41,7 @@ class Column:
         self.unique = unique
         self.check = check
         self.collate = collate
+        self.autoincrement = autoincrement
         self.foreign_key_ref = foreign_key_ref
 
     def __str__(self):
@@ -57,6 +59,8 @@ class Column:
             result += f"CHECK ({self.check})"
         if self.collate is not None:
             result += f"COLLATE ({self.collate})"
+        if self.autoincrement:
+            result += "AUTOINCREMENT "
         if self.foreign_key_ref is not None:
             result += f"FOREIGN KEY REFERENCES ({self.foreign_key_ref})"
         return result[:-1]
@@ -323,10 +327,7 @@ class Dataset:
         logger.info(f"<{self.table_name}>: {delete_dict} deleted")
         return True
 
-    def insert(self, item: dict) -> bool:
-        return self.store(item)
-
-    def update(self, item: dict) -> bool:
+    def insert_or_update(self, item: dict) -> bool:
         return self.store(item)
 
     def delete(self, delete_dict: dict) -> bool:
