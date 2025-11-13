@@ -21,6 +21,9 @@ class CraftItem:
         while len(self.loots) < 3:
             self.loots.append(0)
         self.loots = self.loots[:3]
+        for i, data in enumerate(self.loots):
+            try: int(data)
+            except: self.loots[i] = 0
 
     def __int__(self) -> int:
         total = 0
