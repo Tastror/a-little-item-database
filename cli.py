@@ -142,14 +142,17 @@ class TableApp:
             row_buffers = []
             for header in self.state.headers:
                 buf = Buffer()
-                buf.text = str(row_data.get(header, ""))
+                buf.text = str(row_data[header])
                 row_buffers.append(buf)
             self.buffers.append(row_buffers)
 
     def _get_table_rows_layout(self):
+        num = len(self.state.headers)
         layouts = []
         layouts.append(VSplit([
-            Window(FormattedTextControl(f" {h} "), style="class:header", height=1) for h in self.state.headers
+            Window(
+                FormattedTextControl(f"{h}"), style="class:header", height=1, ignore_content_width=True
+            ) for h in self.state.headers
         ], padding=1, padding_style="class:header.border"))
         if not self.buffers:
             layouts.append(Window(FormattedTextControl(" --- No data available --- ")))
@@ -169,18 +172,19 @@ class TableApp:
                     style = "class:cell.editing"
                 elif is_selected_cell:
                     style = "class:cell.selected"
-                is_readonly = self.state.headers[j].lower() in ['eqv']
-                if not is_readonly:
+                if self.state.is_editing and is_selected_cell:
                     cell_windows.append(Window(
                         content=BufferControl(buffer=buf, focusable=True),
                         style=style,
                         height=1,
+                        ignore_content_width=True,
                     ))
                 else:
                     cell_windows.append(Window(
-                        content=FormattedTextControl(text=buf.text, focusable=True),
+                        content=FormattedTextControl(text=buf.text),
                         style=style,
                         height=1,
+                        ignore_content_width=True,
                     ))
             layouts.append(VSplit(cell_windows, padding=1, padding_style="class:cell.border"))
         return layouts
@@ -304,11 +308,11 @@ class TableApp:
             return
         self.state.is_editing = True
         target_buffer = self.buffers[self.state.selected_row_index][self.state.selected_col_index]
+        self._update_layout()
         for w in self.app.layout.find_all_windows():
             if isinstance(w.content, BufferControl) and w.content.buffer == target_buffer:
                 self.app.layout.focus(w)
                 break
-        self._update_layout()
 
     def _cancel_editing(self):
         original_text = str(self.state.view_data[self.state.selected_row_index].get(self.state.headers[self.state.selected_col_index], ""))

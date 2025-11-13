@@ -43,7 +43,7 @@ class CraftItem:
 
     def __str__(self) -> str:
         if self.only_eqv:
-            return f"Big:{float(self):>7.2f}, Small:{int(self):>5}"
+            return f"{float(self):.2f} ({int(self)})"
         return (
             f"{self.name:<20}\t"
             f"[{self.loots[0]:>3}, {self.loots[1]:>3}, {self.loots[2]:>3}];\t"
