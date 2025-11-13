@@ -19,15 +19,25 @@ from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.widgets import Frame, Dialog, Button, Label
 from prompt_toolkit.styles import Style
 
-from db import Dataset
+from db import Dataset, Scheme
 from craft import CraftItem
+import scheme.genshin as genshin
+import scheme.starrail as starrail
 
 
 class AppState:
 
-    def __init__(self, db_file: str, table_name: str):
+    def __init__(
+        self, db_file: str, table_name: str,
+        *,
+        create_scheme: Scheme | None = None,
+        create_data: list[dict] | None = None
+    ):
         self.db_file = db_file
         self.table_name = table_name
+        self.create_scheme = create_scheme
+        self.create_data = create_data
+
         self.headers: list[str] = []
         self.view_data: list[dict[str, Any]] = []
         self.all_data: list[dict[str, Any]] = []
@@ -37,6 +47,7 @@ class AppState:
         self.top_row_index: int = 0
         self.is_editing: bool = False
 
+        self.has_filter: bool = self.table_name.startswith("genshin")
         self.filter_enabled: bool = False
         self.sort_enabled: bool = False
         self.filter_text: str = ""
@@ -46,7 +57,10 @@ class AppState:
         self.load_data()
 
     def load_data(self):
-        with Dataset(self.db_file, self.table_name) as db:
+        with Dataset(
+            self.db_file, self.table_name,
+            create_scheme=self.create_scheme, create_data=self.create_data
+        ) as db:
             self.headers = db.head_name()
             self.all_data = db.dquery_all()
         self.headers.append("eqv")
@@ -64,7 +78,7 @@ class AppState:
         return res
 
     def apply_filter_and_sort(self):
-        if self.filter_enabled:
+        if self.has_filter and self.filter_enabled:
             now = datetime.datetime.now()
             today_weekday = now.weekday()
             if now.hour < 4: today_weekday = (today_weekday + 6) % 7
@@ -192,8 +206,9 @@ class TableApp:
     def _get_status_text(self):
         total = len(self.state.all_data)
         showing = len(self.state.view_data)
+        filter_data = f" {self.state.filter_text} |" if self.state.has_filter else ""
         left_text = (
-            f" {self.state.filter_text} | {self.state.sort_text} | "
+            f"{filter_data} {self.state.sort_text} | "
             f"Rows: {showing}/{total} | At ({self.state.selected_row_index}, {self.state.selected_col_index})"
         )
         right_text = f" {self.date_text} {self.state.info_text} "
@@ -209,7 +224,9 @@ class TableApp:
         if self.state.is_editing:
             return " [Enter] Save & Exit | [Esc] Cancel Edit "
         else:
-            return " [j/k/h/l] Navigate | [Enter/e] Edit | [f] Toggle Filter | [s] Toggle Sort | [r] Reload | [q] Quit "
+            filter_data = " | [f] Toggle Filter" if self.state.has_filter else ""
+            return f" [j/k/h/l] Navigate | [Enter/e] Edit{filter_data} | [s] Toggle Sort | [r] Reload | [q] Quit "
+
 
     def _get_log_text(self):
         return self.loggint_text
@@ -256,10 +273,11 @@ class TableApp:
 
         @kb_nav.add("f")
         def _(event):
-            self.state.filter_enabled = not self.state.filter_enabled
-            self.state.apply_filter_and_sort()
-            self._update_buffers()
-            self._update_layout()
+            if self.state.has_filter:
+                self.state.filter_enabled = not self.state.filter_enabled
+                self.state.apply_filter_and_sort()
+                self._update_buffers()
+                self._update_layout()
 
         @kb_nav.add("s")
         def _(event):
@@ -344,11 +362,27 @@ class TableApp:
 
 
 if __name__ == "__main__":
+
     db_file = "game.db"
+
     if len(sys.argv) != 2:
         table_name = "genshin_materials"
     else:
         table_name = sys.argv[1]
-    app_state = AppState(db_file, table_name)
+    
+    create_scheme = None
+    create_data = None
+    if table_name.startswith("genshin"):
+        create_scheme = genshin.genshin_scheme
+        create_data = genshin.genshin_init_data
+    elif table_name.startswith("starrail"):
+        create_scheme = starrail.starrail_scheme
+        create_data = starrail.starrail_init_data
+
+    app_state = AppState(
+        db_file, table_name,
+        create_scheme=create_scheme,
+        create_data=create_data
+    )
     app_ui = TableApp(app_state)
     asyncio.run(app_ui.run())
