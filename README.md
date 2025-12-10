@@ -6,7 +6,7 @@
 
 ## run
 
-```bash
+```shell
 # default: genshin_materials
 uv run cli.py
 uv run cli.py starrail_materials
@@ -21,7 +21,7 @@ or
 
 ## test
 
-```bash
+```shell
 uv run test.py
 ```
 
@@ -35,3 +35,12 @@ uv run test.py
 ### filter & sort
 
 ![demo-3](img/demo-3.png)
+
+### use json
+
+```shell
+uv run table-to-json.py genshin_materials
+# change json data
+uv run json-to-table.py genshin_materials
+uv run delete-backup.py genshin_materials
+```

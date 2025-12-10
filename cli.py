@@ -21,8 +21,7 @@ from prompt_toolkit.styles import Style
 
 from db import Dataset, Scheme
 from craft import CraftItem
-import scheme.genshin as genshin
-import scheme.starrail as starrail
+import scheme.genshin, scheme.starrail
 
 
 class AppState:
@@ -403,15 +402,15 @@ if __name__ == "__main__":
     
     create_scheme = None
     create_data = None
-    if table_name.startswith("genshin_weapon"):
-        create_scheme = genshin.genshin_weapon_scheme
-        create_data = genshin.genshin_weapon_init_data
-    elif table_name.startswith("genshin"):
-        create_scheme = genshin.genshin_scheme
-        create_data = genshin.genshin_init_data
-    elif table_name.startswith("starrail"):
-        create_scheme = starrail.starrail_scheme
-        create_data = starrail.starrail_init_data
+    if table_name.startswith("genshin_materials"):
+        create_scheme = scheme.genshin.genshin_scheme
+        create_data = scheme.genshin.genshin_init_data
+    elif table_name.startswith("genshin_weapon"):
+        create_scheme = scheme.genshin.genshin_weapon_scheme
+        create_data = scheme.genshin.genshin_weapon_init_data
+    elif table_name.startswith("starrail_materials"):
+        create_scheme = scheme.starrail.starrail_scheme
+        create_data = scheme.starrail.starrail_init_data
 
     app_state = AppState(
         db_file, table_name,
