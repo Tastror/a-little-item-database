@@ -231,20 +231,20 @@ class AppState:
         except Exception:
             return False
 
-    def insert_key_position(self, current_key: Any) -> Any:
-        current_key = self.config.prikey_type(current_key)
-        if self.sort_enabled == 0 and (current_key + 1) not in self._key_set():
-            return current_key + 1
+    def get_next_insert_prikey(self, current_prikey: Any) -> Any:
+        current_prikey = self.config.prikey_type(current_prikey)
+        if self.sort_enabled == 0 and (current_prikey + 1) not in self._key_set():
+            return current_prikey + 1
         return self._next_bottom_key()
 
-    def blank_row_dict(self, new_key: Any) -> dict[str, Any]:
+    def create_blank_row(self, new_prikey: Any) -> dict[str, Any]:
         headers_without_generated = [h for h in self.headers if h not in self.config.generated_fields]
         if self.config.make_blank:
-            return self.config.make_blank(headers_without_generated, new_key)
+            return self.config.make_blank(headers_without_generated, new_prikey)
         d: dict[str, Any] = {}
         for h in headers_without_generated:
             if h == self.config.prikey_field:
-                d[h] = self.config.prikey_type(new_key)
+                d[h] = self.config.prikey_type(new_prikey)
             else:
                 d[h] = ""
         return d
@@ -626,7 +626,6 @@ class TableApp:
         if dc != 0:
             visible_headers = self._visible_headers()
             current_header = self.state.headers[self.state.selected_col_index]
-            # 如果当前列不可见（例如切换隐藏 id 后），把它挪到第一个可见列
             if current_header not in visible_headers:
                 self.state.selected_col_index = self.state.headers.index(visible_headers[0])
             else:
@@ -637,25 +636,25 @@ class TableApp:
         self._adjust_scroll()
 
     def _add_row(self):
-        kf = self.state.config.prikey_field
+        prikey_field = self.state.config.prikey_field
 
         if not self.state.view_data:
-            new_key = 1
+            new_prikey = 1
         else:
-            current_key = self.state.view_data[self.state.selected_row_index][kf]
-            new_key = self.state.insert_key_position(current_key)
+            current_prikey = self.state.view_data[self.state.selected_row_index][prikey_field]
+            new_prikey = self.state.get_next_insert_prikey(current_prikey)
 
-        if self.state.prikey_exists(new_key):
-            self.logging_text = f"Add: computed {kf}={new_key} already exists (unexpected)."
+        if self.state.prikey_exists(new_prikey):
+            self.logging_text = f"Add: computed {prikey_field}={new_prikey} already exists (unexpected)."
             self.app.invalidate()
             return
 
-        new_row = self.state.blank_row_dict(new_key)
+        new_row = self.state.create_blank_row(new_prikey)
         res = self.state.insert(new_row)
-        self.logging_text = f"Add {res}: {kf}={new_key}"
+        self.logging_text = f"Add {res}: {prikey_field}={new_prikey}"
 
         self._update_buffers()
-        self._focus_row_by_prikey(new_key)
+        self._focus_row_by_prikey(new_prikey)
         self._adjust_scroll()
 
     def _start_editing(self):
@@ -734,8 +733,8 @@ class TableApp:
             return
         row = self.state.view_data[self.state.selected_row_index]
         self._pending_delete = True
-        kf = self.state.config.prikey_field
-        self.logging_text = f"Delete? {kf}={row[kf]} (press 'd' again to confirm, Esc to cancel)"
+        prikey_field = self.state.config.prikey_field
+        self.logging_text = f"Delete? {prikey_field}={row[prikey_field]} (press 'd' again to confirm, Esc to cancel)"
         self.app.invalidate()
 
     def _confirm_delete(self):
@@ -744,8 +743,8 @@ class TableApp:
         self._pending_delete = False
         row = self.state.view_data[self.state.selected_row_index]
         res = self.state.delete(row)
-        kf = self.state.config.prikey_field
-        self.logging_text = f"Delete {res}: {kf}={row[kf]}"
+        prikey_field = self.state.config.prikey_field
+        self.logging_text = f"Delete {res}: {prikey_field}={row[prikey_field]}"
         self._update_buffers()
         self.state.selected_row_index = min(self.state.selected_row_index, max(0, len(self.state.view_data) - 1))
         self._adjust_scroll()
