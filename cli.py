@@ -1,6 +1,7 @@
 import sys
 import asyncio
 import datetime
+from bisect import bisect_left
 from typing import Callable, Any
 from dataclasses import dataclass, field
 
@@ -46,6 +47,7 @@ class TableConfig:
 
 def make_eqv(row: dict[str, Any]) -> CraftItem:
     return CraftItem(
+        # TODO: 目前是硬编码 3 开始是物品直到结尾，暂不更改
         *(list(row.values())[3:]),
         name=row.get("item_name", ""), only_eqv=True
     )
@@ -100,6 +102,9 @@ class AppState:
         self.sort_text: str = ""
         self.info_text: str = ""
 
+        self.header_to_index: dict[str, int] = {}
+        self._cached_key_set: set[Any] = set()
+
         self.load_data()
 
     def load_data(self):
@@ -120,32 +125,11 @@ class AppState:
         for row in self.all_data:
             for g in self.config.generated_fields:
                 gen = self.config.generators.get(g)
-                if gen is None:
-                    row[g] = ""
-                else:
-                    row[g] = gen(row)
-
-        # 跳过 key_field（如果隐藏）和 generated_fields
-        if not self.headers:
-            self.selected_col_index = 0
-        else:
-            if self.selected_col_index < 0 or self.selected_col_index >= len(self.headers):
-                self.selected_col_index = 0
-            current_header = self.headers[self.selected_col_index]
-            if current_header in self.config.generated_fields:
-                for i, h in enumerate(self.headers):
-                    if h not in self.config.generated_fields:
-                        self.selected_col_index = i
-                        break
-
-        # 确保 selected_col_index 指向第一列“可见且可编辑”的真实列
-        visible = [h for h in self.headers if (self.show_id or h != self.config.primary_key_field)]
-        for h in visible:
-            if h not in self.config.generated_fields:
-                self.selected_col_index = self.headers.index(h)
-                break
+                row[g] = "" if gen is None else gen(row)
 
         self.apply_filter_and_sort()
+        self.rebuild_caches()
+        self.normalize_selected_col()
 
     def _strip_generated(self, d: dict[str, Any]) -> dict[str, Any]:
         d = dict(d)
@@ -160,7 +144,7 @@ class AppState:
 
         # old key 统一强转 int（你现在是 id 场景）
         try:
-            old_key_value = int(old_key_value)
+            old_key_value = self.config.primary_key_type(old_key_value)
         except Exception:
             self.info_text = f"Update error: invalid {primary_key_field}={old_key_value!r}"
             return False
@@ -168,7 +152,7 @@ class AppState:
         # 如果要更新 key_field，做唯一检查
         if primary_key_field in new_dict:
             try:
-                new_key_value = int(new_dict[primary_key_field])
+                new_key_value = self.config.primary_key_type(new_dict[primary_key_field])
             except Exception:
                 self.info_text = f"Update error: {primary_key_field} must be int, got {new_dict[primary_key_field]!r}"
                 return False
@@ -196,7 +180,7 @@ class AppState:
         primary_key_field = self.config.primary_key_field
         key_value = old_row_or_key[primary_key_field] if isinstance(old_row_or_key, dict) else old_row_or_key
         with Dataset(self.db_file, self.table_name) as db:
-            res = db.delete({primary_key_field: int(key_value)})
+            res = db.delete({primary_key_field: self.config.primary_key_type(key_value)})
         self.load_data()
         return res
 
@@ -253,24 +237,17 @@ class AppState:
                 self.sort_text = "Sort: Default"
 
     def _key_set(self) -> set[Any]:
-        primary_key_field = self.config.primary_key_field
-        s = set()
-        for r in self.all_data:
-            try:
-                s.add(self.config.primary_key_type(r[primary_key_field]))
-            except Exception:
-                pass
-        return s
+        return self._cached_key_set
 
     def key_exists(self, key_value: Any) -> bool:
         try:
-            return self.config.primary_key_type(key_value) in self._key_set()
+            return self.config.primary_key_type(key_value) in self._cached_key_set
         except Exception:
             return False
 
     def next_bottom_key(self) -> Any:
-        # TODO: 假设 key 可比较/可 +1
-        keys = sorted(self._key_set())
+        # TODO: 假设 key 可比较且可 +1，暂不更改
+        keys = sorted(self._cached_key_set)
         return (keys[-1] + 1) if keys else 1
 
     def compute_insert_key(self, current_key: Any) -> Any:
@@ -295,11 +272,53 @@ class AppState:
         primary_key_field = self.config.primary_key_field
         for i, r in enumerate(self.view_data):
             try:
-                if int(r[primary_key_field]) == int(key_value):
+                if self.config.primary_key_type(r[primary_key_field]) == self.config.primary_key_type(key_value):
                     return i
             except Exception:
                 continue
         return None
+
+    def rebuild_caches(self):
+        self.header_to_index = {h: i for i, h in enumerate(self.headers)}
+        pk = self.config.primary_key_field
+        cast = self.config.primary_key_type
+        s: set[Any] = set()
+        for r in self.all_data:
+            try:
+                s.add(cast(r[pk]))
+            except Exception:
+                pass
+        self._cached_key_set = s
+
+    def normalize_selected_col(self):
+        if not self.headers:
+            self.selected_col_index = 0
+            return
+        self.selected_col_index = max(0, min(self.selected_col_index, len(self.headers) - 1))
+        pk = self.config.primary_key_field
+        generated = set(self.config.generated_fields)
+        def is_visible(h: str) -> bool:
+            return self.show_id or h != pk
+        def is_editable(h: str) -> bool:
+            if h in generated:
+                return False
+            if h == pk and not self.config.allow_edit_primary_key:
+                return False
+            if not is_visible(h):
+                return False
+            return True
+        current_h = self.headers[self.selected_col_index]
+        if is_editable(current_h):
+            return
+        for i, h in enumerate(self.headers):
+            if is_editable(h):
+                self.selected_col_index = i
+                return
+        for i, h in enumerate(self.headers):
+            if is_visible(h) and h not in generated:
+                self.selected_col_index = i
+                return
+        self.selected_col_index = 0
 
 
 class TableApp:
@@ -468,6 +487,45 @@ class TableApp:
             self.state.top_row_index = self.state.selected_row_index - visible_rows_count + 1
         self._update_layout()
 
+    def _get_selected_pk(self) -> int | None:
+        if not self.state.view_data:
+            return None
+        pk = self.state.config.primary_key_field
+        cast = self.state.config.primary_key_type
+        r = self.state.view_data[self.state.selected_row_index]
+        try:
+            return cast(r[pk])
+        except Exception:
+            return None
+
+    def _restore_focus_by_pk_or_next(self, pk_value: int | None):
+        if not self.state.view_data:
+            self.state.selected_row_index = 0
+            return
+        pk_field = self.state.config.primary_key_field
+        cast = self.state.config.primary_key_type
+        if pk_value is not None and self._focus_row_by_key(pk_value):
+            return
+        pairs: list[tuple[int, int]] = []
+        for i, r in enumerate(self.state.view_data):
+            try:
+                pairs.append((cast(r[pk_field]), i))
+            except Exception:
+                continue
+        if not pairs:
+            self.state.selected_row_index = 0
+            return
+        pairs.sort(key=lambda x: x[0])
+        keys = [k for k, _ in pairs]
+        if pk_value is None:
+            self.state.selected_row_index = pairs[0][1]
+            return
+        pos = bisect_left(keys, cast(pk_value))
+        if pos < len(pairs):
+            self.state.selected_row_index = pairs[pos][1]
+        else:
+            self.state.selected_row_index = pairs[-1][1]
+
     def _setup_key_bindings(self):
 
         kb_nav = KeyBindings()
@@ -498,23 +556,29 @@ class TableApp:
         @kb_nav.add("f")
         def _(event):
             if self.state.has_filter:
+                keep_pk = self._get_selected_pk()
                 self.state.filter_enabled = not self.state.filter_enabled
                 self.state.apply_filter_and_sort()
                 self._update_buffers()
-                self._update_layout()
+                self._restore_focus_by_pk_or_next(keep_pk)
+                self._adjust_scroll()
 
         @kb_nav.add("s")
         def _(event):
+            keep_pk = self._get_selected_pk()
             self.state.sort_enabled = (self.state.sort_enabled + 1) % (len(self.state.config.sort_keys) + 1)
             self.state.apply_filter_and_sort()
             self._update_buffers()
-            self._update_layout()
+            self._restore_focus_by_pk_or_next(keep_pk)
+            self._adjust_scroll()
 
         @kb_nav.add("r")
         def _(event):
+            keep_pk = self._get_selected_pk()
             self.state.load_data()
             self._update_buffers()
-            self._update_layout()
+            self._restore_focus_by_pk_or_next(keep_pk)
+            self._adjust_scroll()
 
         @kb_nav.add("a")
         @kb_nav.add("o")
@@ -633,7 +697,7 @@ class TableApp:
         key = self.state.headers[self.state.selected_col_index]
 
         primary_key_field = self.state.config.primary_key_field
-        stable_old_key = int(self.state.view_data[row_index][primary_key_field])
+        stable_old_key = self.state.config.primary_key_type(self.state.view_data[row_index][primary_key_field])
 
         new_text = self.buffers[row_index][self.state.selected_col_index].text
         old_value = str(self.state.view_data[row_index].get(key, ""))
@@ -645,9 +709,8 @@ class TableApp:
 
         track_key = stable_old_key
         if key == primary_key_field:
-            track_key = int(new_text)
             try:
-                track_key = int(new_text)
+                track_key = self.state.config.primary_key_type(new_text)
             except ValueError:
                 self.logging_text = "Update: primary key must be an integer."
                 self._update_buffers()
