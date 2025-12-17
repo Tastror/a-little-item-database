@@ -455,7 +455,7 @@ class TableApp:
             return " [Enter] Save & Exit | [Esc] Cancel Edit "
         else:
             filter_data = " | [f] Filter" if self.state.has_filter else ""
-            return f" [j/k/h/l] Navigate | [Enter/e] Edit{filter_data} | [s] Sort | [a/o] Add | [d] Delete | [i] ID | [r] Reload | [q] Quit "
+            return f" [j/k/h/l] Navigate | [Enter] Edit{filter_data} | [s] Sort | [a/o] Add | [d] Delete | [i] ID | [r] Reload | [q] Quit "
 
     def _get_log_text(self):
         return self.logging_text
@@ -574,7 +574,6 @@ class TableApp:
             self._cancel_pending_delete()
             self._move_cursor(0, -1)
 
-        @kb_nav.add("e")
         @kb_nav.add("enter")
         def _(event):
             self._cancel_pending_delete()
