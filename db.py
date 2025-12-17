@@ -327,6 +327,27 @@ class Dataset:
         logger.info(f"<{self.table_name}>: {delete_dict} deleted")
         return True
 
+    @precheck_return(False)
+    def update_where(self, where_dict: dict, set_dict: dict) -> bool:
+        assert self.cursor is not None
+
+        if not where_dict:
+            logger.warning(f"<{self.table_name}>: won't update if where_dict not specified")
+            return False
+        if not set_dict:
+            logger.warning(f"<{self.table_name}>: won't update if set_dict is empty")
+            return True
+
+        set_clause = ", ".join([f'"{k}" = ?' for k in set_dict.keys()])
+        where_clause = " AND ".join([f'"{k}" = ?' for k in where_dict.keys()])
+        query = f'UPDATE {self.table_name} SET {set_clause} WHERE {where_clause}'
+
+        values = tuple(set_dict.values()) + tuple(where_dict.values())
+        self.cursor.execute(query, values)
+
+        logger.info(f"<{self.table_name}>: update {set_dict} where {where_dict}")
+        return True
+
     def insert_or_update(self, item: dict) -> bool:
         return self.store(item)
 

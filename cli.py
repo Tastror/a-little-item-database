@@ -25,6 +25,8 @@ import scheme.genshin, scheme.starrail
 
 
 class AppState:
+    # CONSTRAIN = "id"
+    # GENERATE_LIST = ["eqv"]
 
     def __init__(
         self, db_file: str, table_name: str,
@@ -45,6 +47,7 @@ class AppState:
         self.selected_col_index: int = 1  # strip "id"
         self.top_row_index: int = 0
         self.is_editing: bool = False
+        self.show_id: bool = False
 
         self.has_filter: bool = self.table_name.startswith("genshin")
         self.filter_enabled: bool = False
@@ -70,26 +73,53 @@ class AppState:
             )
         self.apply_filter_and_sort()
 
-    def update(self, line_id, new_dict) -> bool:
+    def update(self, line_id, new_dict: dict) -> bool:
+        try:
+            old_id = int(line_id)
+        except Exception:
+            self.info_text = f"Update error: invalid id={line_id!r}"
+            return False
+
+        new_dict = dict(new_dict)
+        new_dict.pop("eqv", None)
+
+        if "id" in new_dict:
+            try:
+                new_id = int(new_dict["id"])
+            except Exception:
+                self.info_text = f"Update error: new id must be int, got {new_dict['id']!r}"
+                return False
+
+            if new_id != old_id:
+                with Dataset(self.db_file, self.table_name) as db:
+                    exists = db.dquery_constrain({"id": new_id})
+                if exists:
+                    self.info_text = f"Update error: id={new_id} already exists"
+                    return False
+
+            new_dict["id"] = new_id
+
         with Dataset(self.db_file, self.table_name) as db:
-            old_data = db.dquery_constrain({"id": line_id})[0]
-            old_data.update(new_dict)
-            res = db.insert_or_update(old_data)
-            # if do this, all data will be None (not NULL, why?)
-            # new_dict["id"] = line_id
-            # res = db.insert_or_update(new_dict)
+            rows = db.dquery_constrain({"id": old_id})
+            if not rows:
+                self.info_text = f"Update error: row id={old_id} not found"
+                return False
+
+            res = db.update_where({"id": old_id}, new_dict)
+
         self.load_data()
         return res
 
-    # TODO: add it
     def delete(self, old_dict) -> bool:
+        line_id = old_dict["id"] if isinstance(old_dict, dict) else old_dict
         with Dataset(self.db_file, self.table_name) as db:
-            res = db.delete(old_dict)
+            res = db.delete({"id": int(line_id)})
         self.load_data()
         return res
 
-    # TODO: add it
     def insert(self, new_dict) -> bool:
+        new_dict = dict(new_dict)
+        new_dict.pop("eqv", None)
         with Dataset(self.db_file, self.table_name) as db:
             res = db.insert_or_update(new_dict)
         self.load_data()
@@ -130,6 +160,48 @@ class AppState:
         if self.selected_row_index >= len(self.view_data):
             self.selected_row_index = max(0, len(self.view_data) - 1)
 
+    def _id_set(self) -> set[int]:
+        s = set()
+        for r in self.all_data:
+            try:
+                s.add(int(r["id"]))
+            except Exception:
+                pass
+        return s
+
+    def id_exists(self, new_id: int) -> bool:
+        return int(new_id) in self._id_set()
+
+    def next_bottom_id(self) -> int:
+        ids = sorted(self._id_set())
+        return (ids[-1] + 1) if ids else 1
+
+    def compute_insert_id(self, current_id: int) -> int:
+        current_id = int(current_id)
+        if self.sort_enabled == 0 and (current_id + 1) not in self._id_set():
+            return current_id + 1
+        return self.next_bottom_id()
+
+    def blank_row_dict(self, new_id: int) -> dict[str, Any]:
+        d: dict[str, Any] = {}
+        for h in self.headers:
+            if h == "eqv":
+                continue
+            if h == "id":
+                d["id"] = int(new_id)
+            else:
+                d[h] = ""
+        return d
+
+    def find_view_row_index_by_id(self, row_id: int) -> int | None:
+        for i, r in enumerate(self.view_data):
+            try:
+                if int(r["id"]) == int(row_id):
+                    return i
+            except Exception:
+                continue
+        return None
+
 
 class TableApp:
 
@@ -169,6 +241,7 @@ class TableApp:
             ('cell.editing',   'bg:ansigreen fg:#ffffff'),
         ]
         self.app.style = Style(style_list)
+        self._pending_delete: bool = False
 
     def _update_buffers(self):
         self.buffers = []
@@ -180,13 +253,38 @@ class TableApp:
                 row_buffers.append(buf)
             self.buffers.append(row_buffers)
 
+    def _focus_row_by_id(self, row_id: int) -> bool:
+        idx = self.state.find_view_row_index_by_id(row_id)
+        if idx is None:
+            return False
+        self.state.selected_row_index = idx
+        return True
+
+    def _visible_headers(self) -> list[str]:
+        # 是否显示 id 由 state.show_id 控制；eqv 永远显示（但不可编辑）
+        if self.state.show_id:
+            return self.state.headers[:]  # 包含 id, ... , eqv
+        else:
+            return [h for h in self.state.headers if h != "id"]
+
+    def _col_to_real_index(self, visible_col_index: int) -> int:
+        vh = self._visible_headers()
+        header = vh[visible_col_index]
+        return self.state.headers.index(header)
+
+    def _real_to_visible_index(self, real_index: int) -> int:
+        rh = self.state.headers[real_index]
+        vh = self._visible_headers()
+        return vh.index(rh)
+
     def _get_table_rows_layout(self):
         num = len(self.state.headers)
         layouts = []
+        visible_headers = self._visible_headers()
         layouts.append(VSplit([
             Window(
                 FormattedTextControl(f"{h}"), style="class:header", height=1, ignore_content_width=True
-            ) for h in self.state.headers[1:]  # strip id
+            ) for h in visible_headers
         ], padding=1, padding_style="class:header.border"))
         if not self.buffers:
             layouts.append(Window(FormattedTextControl(" --- No data available --- ")))
@@ -199,9 +297,10 @@ class TableApp:
             current_row_index = self.state.top_row_index + i
             is_selected_row = (current_row_index == self.state.selected_row_index)
             cell_windows = []
-            for j, buf in enumerate(row_buffers):
-                if j == 0: continue  # strip "id"
-                is_selected_cell = is_selected_row and (j == self.state.selected_col_index)
+            for visible_j, header in enumerate(visible_headers):
+                real_j = self.state.headers.index(header)
+                buf = row_buffers[real_j]
+                is_selected_cell = is_selected_row and (real_j == self.state.selected_col_index)
                 style = "class:cell"
                 if self.state.is_editing and is_selected_cell:
                     style = "class:cell.editing"
@@ -228,9 +327,16 @@ class TableApp:
         total = len(self.state.all_data)
         showing = len(self.state.view_data)
         filter_data = f" {self.state.filter_text} |" if self.state.has_filter else ""
+        # 显示可见列坐标
+        visible_headers = self._visible_headers()
+        current_header = self.state.headers[self.state.selected_col_index]
+        try:
+            visible_col = visible_headers.index(current_header)
+        except ValueError:
+            visible_col = 0
         left_text = (
             f"{filter_data} {self.state.sort_text} | "
-            f"Rows: {showing}/{total} | At ({self.state.selected_row_index}, {self.state.selected_col_index - 1})"  # -1: strip "id"
+            f"Rows: {showing}/{total} | At ({self.state.selected_row_index}, {visible_col})"
         )
         right_text = f" {self.date_text} {self.state.info_text} "
 
@@ -246,8 +352,8 @@ class TableApp:
             return " [Enter] Save & Exit | [Esc] Cancel Edit "
         else:
             filter_data = " | [f] Toggle Filter" if self.state.has_filter else ""
-            return f" [j/k/h/l] Navigate | [Enter/e] Edit{filter_data} | [s] Toggle Sort | [r] Reload | [q] Quit "
-
+            id_data = " | [i] Toggle ID"  # Feature 1
+            return f" [j/k/h/l] Navigate | [Enter/e] Edit{filter_data} | [s] Toggle Sort | [a/o] Add | [d] Delete{id_data} | [r] Reload | [q] Quit "
 
     def _get_log_text(self):
         return self.logging_text
@@ -313,6 +419,31 @@ class TableApp:
             self._update_buffers()
             self._update_layout()
 
+        @kb_nav.add("a")
+        @kb_nav.add("o")
+        def _(event):
+            self._pending_delete = False
+            self._add_row()
+
+        @kb_nav.add("i")
+        def _(event):
+            self.state.show_id = not self.state.show_id
+            # 如果隐藏 id 且当前选中列是 id，把列移到下一个
+            if not self.state.show_id and self.state.headers[self.state.selected_col_index] == "id":
+                self.state.selected_col_index = 1 if len(self.state.headers) > 1 else 0
+
+            self._update_layout()
+
+        @kb_nav.add("d")
+        def _(event):
+            if self._pending_delete:
+                self._confirm_delete()
+            else:
+                self._request_delete()
+
+        @kb_nav.add("escape")
+        def _(event): self._cancel_pending_delete()
+
         kb_edit = KeyBindings()
 
         @kb_edit.add("escape")
@@ -332,17 +463,58 @@ class TableApp:
 
     def _move_cursor(self, dr, dc):
         new_row = self.state.selected_row_index + dr
-        new_col = self.state.selected_col_index + dc
         if 0 <= new_row < len(self.buffers):
             self.state.selected_row_index = new_row
-        if 0 <= new_col - 1 < len(self.state.headers) - 1:  # -1: strip "id"
-            self.state.selected_col_index = new_col
+
+        if dc != 0:
+            visible_headers = self._visible_headers()
+            current_header = self.state.headers[self.state.selected_col_index]
+            # 如果当前列不可见（例如切换隐藏 id 后），把它挪到第一个可见列
+            if current_header not in visible_headers:
+                self.state.selected_col_index = self.state.headers.index(visible_headers[0])
+            else:
+                v_idx = visible_headers.index(current_header)
+                v_idx = max(0, min(len(visible_headers) - 1, v_idx + dc))
+                self.state.selected_col_index = self.state.headers.index(visible_headers[v_idx])
+
+        self._adjust_scroll()
+
+    def _add_row(self):
+        if not self.state.view_data:
+            new_id = 1
+        else:
+            current_id = int(self.state.view_data[self.state.selected_row_index]["id"])
+            new_id = self.state.compute_insert_id(current_id)
+
+        if self.state.id_exists(new_id):
+            self.logging_text = f"Add: computed id={new_id} already exists (unexpected)."
+            self.app.invalidate()
+            return
+
+        new_row = self.state.blank_row_dict(new_id)
+        res = self.state.insert(new_row)
+        self.logging_text = f"Add {res}: id={new_id}"
+
+        self._update_buffers()
+
+        for idx, r in enumerate(self.state.view_data):
+            if int(r["id"]) == int(new_id):
+                self.state.selected_row_index = idx
+                break
+
+        if not self.state.show_id and self.state.headers[self.state.selected_col_index] == "id":
+            self.state.selected_col_index = 1 if len(self.state.headers) > 1 else 0
+
         self._adjust_scroll()
 
     def _start_editing(self):
         header = self.state.headers[self.state.selected_col_index]
-        if header.lower() in ['id', 'eqv']:
+        if header.lower() in ['eqv']:
             self.logging_text = f"Edit: '{header}' column is read-only."
+            self.app.invalidate()
+            return
+        if header.lower() == "id" and not self.state.show_id:
+            self.logging_text = "Edit: id is hidden (press 'i' to show)."
             self.app.invalidate()
             return
         self.state.is_editing = True
@@ -363,21 +535,73 @@ class TableApp:
 
     def _save_and_stop_editing(self):
         self.state.is_editing = False
+
+        row_index = self.state.selected_row_index
         key = self.state.headers[self.state.selected_col_index]
-        update_dict = {}
-        old_data = self.state.view_data[self.state.selected_row_index][key]
-        update_dict[key] = self.buffers[self.state.selected_row_index][self.state.selected_col_index].text
-        if str(old_data) == update_dict[key]:
+
+        # 关键：稳定旧 id 一定要从 view_data 拿
+        stable_old_id = int(self.state.view_data[row_index]["id"])
+
+        new_text = self.buffers[row_index][self.state.selected_col_index].text
+        old_value = str(self.state.view_data[row_index].get(key, ""))
+
+        if str(old_value) == str(new_text):
             self.logging_text = "Update: Not Change"
             self._update_layout()
             return
-        res = self.state.update(self.buffers[self.state.selected_row_index][0].text, update_dict)
-        self.logging_text = (
-            f"Update {res}: "
-            f"{old_data} > {update_dict[key]}"
-        )
+
+        track_id = stable_old_id
+        if key == "id":
+            try:
+                track_id = int(new_text)
+            except ValueError:
+                self.logging_text = "Update: id must be an integer."
+                self._update_buffers()
+                self._update_layout()
+                return
+
+        res = self.state.update(stable_old_id, {key: new_text})
+        if not res:
+            self.logging_text = self.state.info_text or "Update: Failed"
+            self._update_buffers()
+            self._update_layout()
+            return
+
         self._update_buffers()
-        self._update_layout()
+
+        found = self._focus_row_by_id(track_id)
+        if not found:
+            self.state.selected_row_index = min(self.state.selected_row_index, max(0, len(self.state.view_data) - 1))
+            self.logging_text = f"Update {res}: {key} {old_value} > {new_text} (row not visible due to filter?)"
+        else:
+            self.logging_text = f"Update {res}: {key} {old_value} > {new_text}"
+
+        self._adjust_scroll()
+
+    def _request_delete(self):
+        if not self.state.view_data:
+            return
+        row = self.state.view_data[self.state.selected_row_index]
+        self._pending_delete = True
+        self.logging_text = f"Delete? id={row['id']} (press 'd' again to confirm, Esc to cancel)"
+        self.app.invalidate()
+
+    def _confirm_delete(self):
+        if not self._pending_delete:
+            return
+        self._pending_delete = False
+        row = self.state.view_data[self.state.selected_row_index]
+        res = self.state.delete(row)
+        self.logging_text = f"Delete {res}: id={row['id']}"
+        self._update_buffers()
+        self.state.selected_row_index = min(self.state.selected_row_index, max(0, len(self.state.view_data) - 1))
+        self._adjust_scroll()
+
+    def _cancel_pending_delete(self):
+        if self._pending_delete:
+            self._pending_delete = False
+            self.logging_text = "Delete: canceled"
+            self.app.invalidate()
 
     async def _background_updater(self):
         while True:
@@ -399,7 +623,7 @@ if __name__ == "__main__":
         table_name = "genshin_materials"
     else:
         table_name = sys.argv[1]
-    
+
     create_scheme = None
     create_data = None
     if table_name.startswith("genshin_materials"):
