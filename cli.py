@@ -1,7 +1,6 @@
 import sys
 import asyncio
 import datetime
-from bisect import bisect_left
 from typing import Callable, Any
 from dataclasses import dataclass, field
 
@@ -132,46 +131,46 @@ class AppState:
         self._normalize_selected_col()
 
     def update(self, old_prikey_value: Any, new_dict: dict) -> bool:
-        prikey_field = self.config.prikey_field
+        pf = self.config.prikey_field
         new_dict = self._strip_generated(new_dict)
 
         try:
             old_prikey_value = self.config.prikey_type(old_prikey_value)
         except Exception:
-            self.info_text = f"Update error: invalid {prikey_field}={old_prikey_value!r}"
+            self.info_text = f"Update error: invalid {pf}={old_prikey_value!r}"
             return False
 
-        if prikey_field in new_dict:
+        if pf in new_dict:
             try:
-                new_prikey_value = self.config.prikey_type(new_dict[prikey_field])
+                new_prikey_value = self.config.prikey_type(new_dict[pf])
             except Exception:
-                self.info_text = f"Update error: {prikey_field} must be int, got {new_dict[prikey_field]!r}"
+                self.info_text = f"Update error: {pf} must be int, got {new_dict[pf]!r}"
                 return False
 
             if new_prikey_value != old_prikey_value:
                 with Dataset(self.db_file, self.table_name) as db:
-                    exists = db.dquery_constrain({prikey_field: new_prikey_value})
+                    exists = db.dquery_constrain({pf: new_prikey_value})
                 if exists:
-                    self.info_text = f"Update error: {prikey_field}={new_prikey_value} already exists"
+                    self.info_text = f"Update error: {pf}={new_prikey_value} already exists"
                     return False
 
-            new_dict[prikey_field] = new_prikey_value
+            new_dict[pf] = new_prikey_value
 
         with Dataset(self.db_file, self.table_name) as db:
-            rows = db.dquery_constrain({prikey_field: old_prikey_value})
+            rows = db.dquery_constrain({pf: old_prikey_value})
             if not rows:
-                self.info_text = f"Update error: row {prikey_field}={old_prikey_value} not found"
+                self.info_text = f"Update error: row {pf}={old_prikey_value} not found"
                 return False
-            res = db.update_where({prikey_field: old_prikey_value}, new_dict)
+            res = db.update_where({pf: old_prikey_value}, new_dict)
 
         self.load_data()
         return res
 
     def delete(self, old_row_or_prikey_value: dict | Any) -> bool:
-        prikey_field = self.config.prikey_field
-        prikey_value = old_row_or_prikey_value[prikey_field] if isinstance(old_row_or_prikey_value, dict) else old_row_or_prikey_value
+        pf = self.config.prikey_field
+        prikey_value = old_row_or_prikey_value[pf] if isinstance(old_row_or_prikey_value, dict) else old_row_or_prikey_value
         with Dataset(self.db_file, self.table_name) as db:
-            res = db.delete({prikey_field: self.config.prikey_type(prikey_value)})
+            res = db.delete({pf: self.config.prikey_type(prikey_value)})
         self.load_data()
         return res
 
@@ -207,13 +206,13 @@ class AppState:
             self.view_data = self.all_data[:]
             self.info_text = ""
 
-        prikey_field = self.config.prikey_field
+        pf = self.config.prikey_field
 
         if self.sort_enabled == 0:
             if self.config.default_sort_key:
                 self.view_data.sort(key=self.config.default_sort_key)
             else:
-                self.view_data.sort(key=lambda r: self.config.prikey_type(r[prikey_field]))
+                self.view_data.sort(key=lambda r: self.config.prikey_type(r[pf]))
             self.sort_text = self.config.sort_texts.get(0, "Sort: Default")
         else:
             sk = self.config.sort_keys.get(self.sort_enabled)
@@ -222,7 +221,7 @@ class AppState:
                 self.sort_text = self.config.sort_texts.get(self.sort_enabled, f"Sort: {self.sort_enabled}")
             else:
                 # fallback
-                self.view_data.sort(key=lambda r: self.config.prikey_type(r[prikey_field]))
+                self.view_data.sort(key=lambda r: self.config.prikey_type(r[pf]))
                 self.sort_text = "Sort: Default"
 
     def prikey_exists(self, prikey_value: Any) -> bool:
@@ -251,12 +250,12 @@ class AppState:
 
     def _rebuild_caches(self):
         self.header_to_index = {h: i for i, h in enumerate(self.headers)}
-        pk = self.config.prikey_field
+        pf = self.config.prikey_field
         cast = self.config.prikey_type
         s: set[Any] = set()
         for r in self.all_data:
             try:
-                s.add(cast(r[pk]))
+                s.add(cast(r[pf]))
             except Exception:
                 pass
         self._cached_key_set = s
@@ -270,10 +269,10 @@ class AppState:
         return (keys[-1] + 1) if keys else 1
 
     def _find_view_row_index_by_prikey(self, prikey_value: Any) -> int | None:
-        prikey_field = self.config.prikey_field
+        pf = self.config.prikey_field
         for i, r in enumerate(self.view_data):
             try:
-                if self.config.prikey_type(r[prikey_field]) == self.config.prikey_type(prikey_value):
+                if self.config.prikey_type(r[pf]) == self.config.prikey_type(prikey_value):
                     return i
             except Exception:
                 continue
@@ -290,14 +289,14 @@ class AppState:
             self.selected_col_index = 0
             return
         self.selected_col_index = max(0, min(self.selected_col_index, len(self.headers) - 1))
-        pk = self.config.prikey_field
+        pf = self.config.prikey_field
         generated = set(self.config.generated_fields)
         def is_visible(h: str) -> bool:
-            return self.show_id or h != pk
+            return self.show_id or h != pf
         def is_editable(h: str) -> bool:
             if h in generated:
                 return False
-            if h == pk and not self.config.allow_edit_prikey:
+            if h == pf and not self.config.allow_edit_prikey:
                 return False
             if not is_visible(h):
                 return False
@@ -367,10 +366,10 @@ class TableApp:
             self.buffers.append(row_buffers)
 
     def _visible_headers(self) -> list[str]:
-        prikey_field = self.state.config.prikey_field
+        pf = self.state.config.prikey_field
         if self.state.show_id:
             return self.state.headers[:]
-        return [h for h in self.state.headers if h != prikey_field]
+        return [h for h in self.state.headers if h != pf]
 
     def _col_to_real_index(self, visible_col_index: int) -> int:
         vh = self._visible_headers()
@@ -484,41 +483,65 @@ class TableApp:
     def _get_selected_prikey(self) -> int | None:
         if not self.state.view_data:
             return None
-        prikey_field = self.state.config.prikey_field
+        pf = self.state.config.prikey_field
         cast = self.state.config.prikey_type
         r = self.state.view_data[self.state.selected_row_index]
         try:
-            return cast(r[prikey_field])
+            return cast(r[pf])
         except Exception:
             return None
 
-    def _restore_focus_by_prikey_or_next(self, pk_value: int | None):
+    def _get_view_prikey_list(self) -> list[Any]:
+        pf = self.state.config.prikey_field
+        cast = self.state.config.prikey_type
+        out = []
+        for r in self.state.view_data:
+            try:
+                out.append(cast(r[pf]))
+            except Exception:
+                out.append(None)
+        return out
+
+    def _restore_focus_by_prev_visible(
+        self,
+        old_prikey_list: list[Any],
+        old_current_prikey: Any | None,
+    ):
+        """
+        规则：
+        1) 变更后若还能命中 old_current_prikey，直接命中（同一条记录）。
+        2) 否则在 old_prikey_list 里，从 old_current_prikey 的位置往上找，
+        找到第一个在新 view 中存在的主键并聚焦。
+        3) 若上方没有，再往下找第一个存在的。
+        4) 再不行（新 view 为空）则 0。
+        """
         if not self.state.view_data:
             self.state.selected_row_index = 0
             return
-        prikey_field = self.state.config.prikey_field
-        cast = self.state.config.prikey_type
-        if pk_value is not None and self._focus_row_by_prikey(pk_value):
+        if old_current_prikey is not None and self._focus_row_by_prikey(old_current_prikey):
             return
-        pairs: list[tuple[int, int]] = []
-        for i, r in enumerate(self.state.view_data):
-            try:
-                pairs.append((cast(r[prikey_field]), i))
-            except Exception:
-                continue
-        if not pairs:
+        try:
+            pos = old_prikey_list.index(old_current_prikey)
+        except ValueError:
             self.state.selected_row_index = 0
             return
-        pairs.sort(key=lambda x: x[0])
-        keys = [k for k, _ in pairs]
-        if pk_value is None:
-            self.state.selected_row_index = pairs[0][1]
-            return
-        pos = bisect_left(keys, cast(pk_value))
-        if pos < len(pairs):
-            self.state.selected_row_index = pairs[pos][1]
-        else:
-            self.state.selected_row_index = pairs[-1][1]
+        pf = self.state.config.prikey_field
+        cast = self.state.config.prikey_type
+        new_keys = set()
+        for r in self.state.view_data:
+            try:
+                new_keys.add(cast(r[pf]))
+            except Exception:
+                pass
+        for i in range(pos - 1, -1, -1):
+            k = old_prikey_list[i]
+            if k in new_keys and self._focus_row_by_prikey(k):
+                return
+        for i in range(pos + 1, len(old_prikey_list)):
+            k = old_prikey_list[i]
+            if k in new_keys and self._focus_row_by_prikey(k):
+                return
+        self.state.selected_row_index = 0
 
     def _setup_key_bindings(self):
 
@@ -550,28 +573,31 @@ class TableApp:
         @kb_nav.add("f")
         def _(event):
             if self.state.has_filter:
-                keep_pk = self._get_selected_prikey()
+                old_prikey_list = self._get_view_prikey_list()
+                keep_prikey = self._get_selected_prikey()
                 self.state.filter_enabled = not self.state.filter_enabled
                 self.state.apply_filter_and_sort()
                 self._update_buffers()
-                self._restore_focus_by_prikey_or_next(keep_pk)
+                self._restore_focus_by_prev_visible(old_prikey_list, keep_prikey)
                 self._adjust_scroll()
 
         @kb_nav.add("s")
         def _(event):
-            keep_pk = self._get_selected_prikey()
+            old_prikey_list = self._get_view_prikey_list()
+            keep_prikey = self._get_selected_prikey()
             self.state.sort_enabled = (self.state.sort_enabled + 1) % (len(self.state.config.sort_keys) + 1)
             self.state.apply_filter_and_sort()
             self._update_buffers()
-            self._restore_focus_by_prikey_or_next(keep_pk)
+            self._restore_focus_by_prev_visible(old_prikey_list, keep_prikey)
             self._adjust_scroll()
 
         @kb_nav.add("r")
         def _(event):
-            keep_pk = self._get_selected_prikey()
+            old_prikey_list = self._get_view_prikey_list()
+            keep_prikey = self._get_selected_prikey()
             self.state.load_data()
             self._update_buffers()
-            self._restore_focus_by_prikey_or_next(keep_pk)
+            self._restore_focus_by_prev_visible(old_prikey_list, keep_prikey)
             self._adjust_scroll()
 
         @kb_nav.add("a")
@@ -583,10 +609,10 @@ class TableApp:
         @kb_nav.add("i")
         def _(event):
             self.state.show_id = not self.state.show_id
-            prikey_field = self.state.config.prikey_field
-            if (not self.state.show_id) and (self.state.headers[self.state.selected_col_index] == prikey_field):
+            pf = self.state.config.prikey_field
+            if (not self.state.show_id) and (self.state.headers[self.state.selected_col_index] == pf):
                 for h in self.state.headers:
-                    if h != prikey_field and h not in self.state.config.generated_fields:
+                    if h != pf and h not in self.state.config.generated_fields:
                         self.state.selected_col_index = self.state.headers.index(h)
                         break
             self._update_layout()
@@ -636,22 +662,22 @@ class TableApp:
         self._adjust_scroll()
 
     def _add_row(self):
-        prikey_field = self.state.config.prikey_field
+        pf = self.state.config.prikey_field
 
         if not self.state.view_data:
             new_prikey = 1
         else:
-            current_prikey = self.state.view_data[self.state.selected_row_index][prikey_field]
+            current_prikey = self.state.view_data[self.state.selected_row_index][pf]
             new_prikey = self.state.get_next_insert_prikey(current_prikey)
 
         if self.state.prikey_exists(new_prikey):
-            self.logging_text = f"Add: computed {prikey_field}={new_prikey} already exists (unexpected)."
+            self.logging_text = f"Add: computed {pf}={new_prikey} already exists (unexpected)."
             self.app.invalidate()
             return
 
         new_row = self.state.create_blank_row(new_prikey)
         res = self.state.insert(new_row)
-        self.logging_text = f"Add {res}: {prikey_field}={new_prikey}"
+        self.logging_text = f"Add {res}: {pf}={new_prikey}"
 
         self._update_buffers()
         self._focus_row_by_prikey(new_prikey)
@@ -689,8 +715,8 @@ class TableApp:
         row_index = self.state.selected_row_index
         key = self.state.headers[self.state.selected_col_index]
 
-        prikey_field = self.state.config.prikey_field
-        stable_old_key = self.state.config.prikey_type(self.state.view_data[row_index][prikey_field])
+        pf = self.state.config.prikey_field
+        stable_old_key = self.state.config.prikey_type(self.state.view_data[row_index][pf])
 
         new_text = self.buffers[row_index][self.state.selected_col_index].text
         old_value = str(self.state.view_data[row_index].get(key, ""))
@@ -701,7 +727,7 @@ class TableApp:
             return
 
         track_key = stable_old_key
-        if key == prikey_field:
+        if key == pf:
             try:
                 track_key = self.state.config.prikey_type(new_text)
             except ValueError:
@@ -733,8 +759,8 @@ class TableApp:
             return
         row = self.state.view_data[self.state.selected_row_index]
         self._pending_delete = True
-        prikey_field = self.state.config.prikey_field
-        self.logging_text = f"Delete? {prikey_field}={row[prikey_field]} (press 'd' again to confirm, Esc to cancel)"
+        pf = self.state.config.prikey_field
+        self.logging_text = f"Delete? {pf}={row[pf]} (press 'd' again to confirm, Esc to cancel)"
         self.app.invalidate()
 
     def _confirm_delete(self):
@@ -743,8 +769,8 @@ class TableApp:
         self._pending_delete = False
         row = self.state.view_data[self.state.selected_row_index]
         res = self.state.delete(row)
-        prikey_field = self.state.config.prikey_field
-        self.logging_text = f"Delete {res}: {prikey_field}={row[prikey_field]}"
+        pf = self.state.config.prikey_field
+        self.logging_text = f"Delete {res}: {pf}={row[pf]}"
         self._update_buffers()
         self.state.selected_row_index = min(self.state.selected_row_index, max(0, len(self.state.view_data) - 1))
         self._adjust_scroll()
