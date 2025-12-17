@@ -1,7 +1,8 @@
 import sys
 import asyncio
 import datetime
-from typing import Any
+from typing import Callable, Any
+from dataclasses import dataclass, field
 
 from prompt_toolkit import Application, ANSI, PromptSession
 from prompt_toolkit.application import get_app
@@ -24,18 +25,60 @@ from craft import CraftItem
 import scheme.genshin, scheme.starrail
 
 
+@dataclass
+class TableConfig:
+    # 主键
+    primary_key_field: str = "id"
+    primary_key_type: Callable[[Any], Any] = int
+    allow_edit_primary_key: bool = True
+
+    # 运行时生成的键
+    generated_fields: list[str] = field(default_factory=lambda: ["eqv"])
+    generators: dict[str, Callable[[dict[str, Any]], Any]] = field(default_factory=dict)
+
+    # 默认排序和其他排序键
+    default_sort_key: Callable[[dict[str, Any]], Any] | None = None
+    sort_keys: dict[int, Callable[[dict[str, Any]], Any]] = field(default_factory=dict)
+    sort_texts: dict[int, str] = field(default_factory=dict)
+
+    make_blank: Callable[[list[str], Any], dict[str, Any]] | None = None
+
+
+def make_eqv(row: dict[str, Any]) -> CraftItem:
+    return CraftItem(
+        *(list(row.values())[3:]),
+        name=row.get("item_name", ""), only_eqv=True
+    )
+
+eqv_config = TableConfig(
+    primary_key_field="id",
+    primary_key_type=int,
+    allow_edit_primary_key=True,
+    generated_fields=["eqv"],
+    generators={"eqv": make_eqv},
+    default_sort_key=lambda r: int(r["id"]),
+    sort_keys={
+        1: lambda r: r["eqv"],
+    },
+    sort_texts={
+        0: "Sort: Default",
+        1: "Sort: Eqv",
+    }
+)
+
+
 class AppState:
-    # CONSTRAIN = "id"
-    # GENERATE_LIST = ["eqv"]
 
     def __init__(
         self, db_file: str, table_name: str,
         *,
+        config: TableConfig = eqv_config,
         create_scheme: Scheme | None = None,
         create_data: list[dict] | None = None
     ):
         self.db_file = db_file
         self.table_name = table_name
+        self.config = config
         self.create_scheme = create_scheme
         self.create_data = create_data
 
@@ -44,7 +87,7 @@ class AppState:
         self.all_data: list[dict[str, Any]] = []
 
         self.selected_row_index: int = 0
-        self.selected_col_index: int = 1  # strip "id"
+        self.selected_col_index: int = 0
         self.top_row_index: int = 0
         self.is_editing: bool = False
         self.show_id: bool = False
@@ -63,69 +106,101 @@ class AppState:
             self.db_file, self.table_name,
             create_scheme=self.create_scheme, create_data=self.create_data
         ) as db:
-            self.headers = db.head_name()
+            db_headers = db.head_name()
             self.all_data = db.dquery_all()
-        self.headers.append("eqv")
+
+        self.headers = db_headers[:]
+        for g in self.config.generated_fields:
+            if g not in self.headers:
+                self.headers.append(g)
+
         for row in self.all_data:
-            row["eqv"] = CraftItem(
-                *(list(row.values())[3:]),
-                name=row.get("item_name", ""), only_eqv=True
-            )
+            for g in self.config.generated_fields:
+                gen = self.config.generators.get(g)
+                if gen is None:
+                    row[g] = ""
+                else:
+                    row[g] = gen(row)
+
+        # 跳过 key_field（如果隐藏）和 generated_fields
+        if not self.headers:
+            self.selected_col_index = 0
+        else:
+            if self.selected_col_index < 0 or self.selected_col_index >= len(self.headers):
+                self.selected_col_index = 0
+            current_header = self.headers[self.selected_col_index]
+            if current_header in self.config.generated_fields:
+                for i, h in enumerate(self.headers):
+                    if h not in self.config.generated_fields:
+                        self.selected_col_index = i
+                        break
+
         self.apply_filter_and_sort()
 
-    def update(self, line_id, new_dict: dict) -> bool:
+    def _strip_generated(self, d: dict[str, Any]) -> dict[str, Any]:
+        d = dict(d)
+        for g in self.config.generated_fields:
+            d.pop(g, None)
+        return d
+
+    def update(self, old_key_value, new_dict: dict) -> bool:
+        primary_key_field = self.config.primary_key_field
+
+        new_dict = self._strip_generated(new_dict)
+
+        # old key 统一强转 int（你现在是 id 场景）
         try:
-            old_id = int(line_id)
+            old_key_value = int(old_key_value)
         except Exception:
-            self.info_text = f"Update error: invalid id={line_id!r}"
+            self.info_text = f"Update error: invalid {primary_key_field}={old_key_value!r}"
             return False
 
-        new_dict = dict(new_dict)
-        new_dict.pop("eqv", None)
-
-        if "id" in new_dict:
+        # 如果要更新 key_field，做唯一检查
+        if primary_key_field in new_dict:
             try:
-                new_id = int(new_dict["id"])
+                new_key_value = int(new_dict[primary_key_field])
             except Exception:
-                self.info_text = f"Update error: new id must be int, got {new_dict['id']!r}"
+                self.info_text = f"Update error: {primary_key_field} must be int, got {new_dict[primary_key_field]!r}"
                 return False
 
-            if new_id != old_id:
+            if new_key_value != old_key_value:
                 with Dataset(self.db_file, self.table_name) as db:
-                    exists = db.dquery_constrain({"id": new_id})
+                    exists = db.dquery_constrain({primary_key_field: new_key_value})
                 if exists:
-                    self.info_text = f"Update error: id={new_id} already exists"
+                    self.info_text = f"Update error: {primary_key_field}={new_key_value} already exists"
                     return False
 
-            new_dict["id"] = new_id
+            new_dict[primary_key_field] = new_key_value
 
         with Dataset(self.db_file, self.table_name) as db:
-            rows = db.dquery_constrain({"id": old_id})
+            rows = db.dquery_constrain({primary_key_field: old_key_value})
             if not rows:
-                self.info_text = f"Update error: row id={old_id} not found"
+                self.info_text = f"Update error: row {primary_key_field}={old_key_value} not found"
                 return False
-
-            res = db.update_where({"id": old_id}, new_dict)
+            res = db.update_where({primary_key_field: old_key_value}, new_dict)
 
         self.load_data()
         return res
 
-    def delete(self, old_dict) -> bool:
-        line_id = old_dict["id"] if isinstance(old_dict, dict) else old_dict
+    def delete(self, old_row_or_key) -> bool:
+        primary_key_field = self.config.primary_key_field
+        key_value = old_row_or_key[primary_key_field] if isinstance(old_row_or_key, dict) else old_row_or_key
         with Dataset(self.db_file, self.table_name) as db:
-            res = db.delete({"id": int(line_id)})
+            res = db.delete({primary_key_field: int(key_value)})
         self.load_data()
         return res
 
     def insert(self, new_dict) -> bool:
         new_dict = dict(new_dict)
-        new_dict.pop("eqv", None)
+        new_dict = self._strip_generated(new_dict)
         with Dataset(self.db_file, self.table_name) as db:
             res = db.insert_or_update(new_dict)
         self.load_data()
         return res
 
     def apply_filter_and_sort(self):
+
+        # TODO: now must have open_day, move to config
         if self.has_filter and self.filter_enabled:
             now = datetime.datetime.now()
             today_weekday = now.weekday()
@@ -148,55 +223,70 @@ class AppState:
             self.view_data = self.all_data[:]
             self.info_text = ""
 
-        if self.sort_enabled == 1:
-            self.view_data.sort(key=lambda row: row["eqv"])
-            self.sort_text = "Sort: Eqv"
-        elif self.sort_enabled == 2:
-            self.view_data.sort(key=lambda row: (row[self.headers[1]], str(row[self.headers[2]])))  # strip "id"
-            self.sort_text = "Sort: Name"
-        else:
-            self.view_data.sort(key=lambda row: row["id"])
-            self.sort_text = "Sort: Default"
-        if self.selected_row_index >= len(self.view_data):
-            self.selected_row_index = max(0, len(self.view_data) - 1)
+        primary_key_field = self.config.primary_key_field
 
-    def _id_set(self) -> set[int]:
+        if self.sort_enabled == 0:
+            # 默认排序：优先用 config.default_sort_key，否则按 primary_key_field
+            if self.config.default_sort_key:
+                self.view_data.sort(key=self.config.default_sort_key)
+            else:
+                self.view_data.sort(key=lambda r: self.config.primary_key_type(r[primary_key_field]))
+            self.sort_text = self.config.sort_texts.get(0, "Sort: Default")
+
+        else:
+            sk = self.config.sort_keys.get(self.sort_enabled)
+            if sk:
+                self.view_data.sort(key=sk)
+                self.sort_text = self.config.sort_texts.get(self.sort_enabled, f"Sort: {self.sort_enabled}")
+            else:
+                # fallback
+                self.view_data.sort(key=lambda r: self.config.primary_key_type(r[primary_key_field]))
+                self.sort_text = "Sort: Default"
+
+    def _key_set(self) -> set[Any]:
+        primary_key_field = self.config.primary_key_field
         s = set()
         for r in self.all_data:
             try:
-                s.add(int(r["id"]))
+                s.add(self.config.primary_key_type(r[primary_key_field]))
             except Exception:
                 pass
         return s
 
-    def id_exists(self, new_id: int) -> bool:
-        return int(new_id) in self._id_set()
+    def key_exists(self, key_value: Any) -> bool:
+        try:
+            return self.config.primary_key_type(key_value) in self._key_set()
+        except Exception:
+            return False
 
-    def next_bottom_id(self) -> int:
-        ids = sorted(self._id_set())
-        return (ids[-1] + 1) if ids else 1
+    def next_bottom_key(self) -> Any:
+        # TODO: 假设 key 可比较/可 +1
+        keys = sorted(self._key_set())
+        return (keys[-1] + 1) if keys else 1
 
-    def compute_insert_id(self, current_id: int) -> int:
-        current_id = int(current_id)
-        if self.sort_enabled == 0 and (current_id + 1) not in self._id_set():
-            return current_id + 1
-        return self.next_bottom_id()
+    def compute_insert_key(self, current_key: Any) -> Any:
+        current_key = self.config.primary_key_type(current_key)
+        if self.sort_enabled == 0 and (current_key + 1) not in self._key_set():
+            return current_key + 1
+        return self.next_bottom_key()
 
-    def blank_row_dict(self, new_id: int) -> dict[str, Any]:
+    def blank_row_dict(self, new_key: Any) -> dict[str, Any]:
+        headers_without_generated = [h for h in self.headers if h not in self.config.generated_fields]
+        if self.config.make_blank:
+            return self.config.make_blank(headers_without_generated, new_key)
         d: dict[str, Any] = {}
-        for h in self.headers:
-            if h == "eqv":
-                continue
-            if h == "id":
-                d["id"] = int(new_id)
+        for h in headers_without_generated:
+            if h == self.config.primary_key_field:
+                d[h] = self.config.primary_key_type(new_key)
             else:
                 d[h] = ""
         return d
 
-    def find_view_row_index_by_id(self, row_id: int) -> int | None:
+    def find_view_row_index_by_key(self, key_value: int) -> int | None:
+        primary_key_field = self.config.primary_key_field
         for i, r in enumerate(self.view_data):
             try:
-                if int(r["id"]) == int(row_id):
+                if int(r[primary_key_field]) == int(key_value):
                     return i
             except Exception:
                 continue
@@ -253,19 +343,18 @@ class TableApp:
                 row_buffers.append(buf)
             self.buffers.append(row_buffers)
 
-    def _focus_row_by_id(self, row_id: int) -> bool:
-        idx = self.state.find_view_row_index_by_id(row_id)
+    def _focus_row_by_key(self, key_value: int) -> bool:
+        idx = self.state.find_view_row_index_by_key(key_value)
         if idx is None:
             return False
         self.state.selected_row_index = idx
         return True
 
     def _visible_headers(self) -> list[str]:
-        # 是否显示 id 由 state.show_id 控制；eqv 永远显示（但不可编辑）
+        primary_key_field = self.state.config.primary_key_field
         if self.state.show_id:
-            return self.state.headers[:]  # 包含 id, ... , eqv
-        else:
-            return [h for h in self.state.headers if h != "id"]
+            return self.state.headers[:]
+        return [h for h in self.state.headers if h != primary_key_field]
 
     def _col_to_real_index(self, visible_col_index: int) -> int:
         vh = self._visible_headers()
@@ -351,9 +440,8 @@ class TableApp:
         if self.state.is_editing:
             return " [Enter] Save & Exit | [Esc] Cancel Edit "
         else:
-            filter_data = " | [f] Toggle Filter" if self.state.has_filter else ""
-            id_data = " | [i] Toggle ID"  # Feature 1
-            return f" [j/k/h/l] Navigate | [Enter/e] Edit{filter_data} | [s] Toggle Sort | [a/o] Add | [d] Delete{id_data} | [r] Reload | [q] Quit "
+            filter_data = " | [f] Filter" if self.state.has_filter else ""
+            return f" [j/k/h/l] Navigate | [Enter/e] Edit{filter_data} | [s] Sort | [a/o] Add | [d] Delete | [i] ID | [r] Reload | [q] Quit "
 
     def _get_log_text(self):
         return self.logging_text
@@ -408,7 +496,7 @@ class TableApp:
 
         @kb_nav.add("s")
         def _(event):
-            self.state.sort_enabled = (self.state.sort_enabled + 1) % 3
+            self.state.sort_enabled = (self.state.sort_enabled + 1) % (len(self.state.config.sort_keys) + 1)
             self.state.apply_filter_and_sort()
             self._update_buffers()
             self._update_layout()
@@ -428,10 +516,12 @@ class TableApp:
         @kb_nav.add("i")
         def _(event):
             self.state.show_id = not self.state.show_id
-            # 如果隐藏 id 且当前选中列是 id，把列移到下一个
-            if not self.state.show_id and self.state.headers[self.state.selected_col_index] == "id":
-                self.state.selected_col_index = 1 if len(self.state.headers) > 1 else 0
-
+            primary_key_field = self.state.config.primary_key_field
+            if (not self.state.show_id) and (self.state.headers[self.state.selected_col_index] == primary_key_field):
+                for h in self.state.headers:
+                    if h != primary_key_field and h not in self.state.config.generated_fields:
+                        self.state.selected_col_index = self.state.headers.index(h)
+                        break
             self._update_layout()
 
         @kb_nav.add("d")
@@ -480,41 +570,35 @@ class TableApp:
         self._adjust_scroll()
 
     def _add_row(self):
-        if not self.state.view_data:
-            new_id = 1
-        else:
-            current_id = int(self.state.view_data[self.state.selected_row_index]["id"])
-            new_id = self.state.compute_insert_id(current_id)
+        kf = self.state.config.primary_key_field
 
-        if self.state.id_exists(new_id):
-            self.logging_text = f"Add: computed id={new_id} already exists (unexpected)."
+        if not self.state.view_data:
+            new_key = 1
+        else:
+            current_key = self.state.view_data[self.state.selected_row_index][kf]
+            new_key = self.state.compute_insert_key(current_key)
+
+        if self.state.key_exists(new_key):
+            self.logging_text = f"Add: computed {kf}={new_key} already exists (unexpected)."
             self.app.invalidate()
             return
 
-        new_row = self.state.blank_row_dict(new_id)
+        new_row = self.state.blank_row_dict(new_key)
         res = self.state.insert(new_row)
-        self.logging_text = f"Add {res}: id={new_id}"
+        self.logging_text = f"Add {res}: {kf}={new_key}"
 
         self._update_buffers()
-
-        for idx, r in enumerate(self.state.view_data):
-            if int(r["id"]) == int(new_id):
-                self.state.selected_row_index = idx
-                break
-
-        if not self.state.show_id and self.state.headers[self.state.selected_col_index] == "id":
-            self.state.selected_col_index = 1 if len(self.state.headers) > 1 else 0
-
+        self._focus_row_by_key(new_key)
         self._adjust_scroll()
 
     def _start_editing(self):
         header = self.state.headers[self.state.selected_col_index]
-        if header.lower() in ['eqv']:
+        if header in self.state.config.generated_fields:
             self.logging_text = f"Edit: '{header}' column is read-only."
             self.app.invalidate()
             return
-        if header.lower() == "id" and not self.state.show_id:
-            self.logging_text = "Edit: id is hidden (press 'i' to show)."
+        if header == self.state.config.primary_key_field and not self.state.config.allow_edit_primary_key:
+            self.logging_text = f"Edit: '{header}' is not editable."
             self.app.invalidate()
             return
         self.state.is_editing = True
@@ -539,8 +623,8 @@ class TableApp:
         row_index = self.state.selected_row_index
         key = self.state.headers[self.state.selected_col_index]
 
-        # 关键：稳定旧 id 一定要从 view_data 拿
-        stable_old_id = int(self.state.view_data[row_index]["id"])
+        primary_key_field = self.state.config.primary_key_field
+        stable_old_key = int(self.state.view_data[row_index][primary_key_field])
 
         new_text = self.buffers[row_index][self.state.selected_col_index].text
         old_value = str(self.state.view_data[row_index].get(key, ""))
@@ -550,17 +634,18 @@ class TableApp:
             self._update_layout()
             return
 
-        track_id = stable_old_id
-        if key == "id":
+        track_key = stable_old_key
+        if key == primary_key_field:
+            track_key = int(new_text)
             try:
-                track_id = int(new_text)
+                track_key = int(new_text)
             except ValueError:
-                self.logging_text = "Update: id must be an integer."
+                self.logging_text = "Update: primary key must be an integer."
                 self._update_buffers()
                 self._update_layout()
                 return
 
-        res = self.state.update(stable_old_id, {key: new_text})
+        res = self.state.update(stable_old_key, {key: new_text})
         if not res:
             self.logging_text = self.state.info_text or "Update: Failed"
             self._update_buffers()
@@ -569,7 +654,7 @@ class TableApp:
 
         self._update_buffers()
 
-        found = self._focus_row_by_id(track_id)
+        found = self._focus_row_by_key(track_key)
         if not found:
             self.state.selected_row_index = min(self.state.selected_row_index, max(0, len(self.state.view_data) - 1))
             self.logging_text = f"Update {res}: {key} {old_value} > {new_text} (row not visible due to filter?)"
@@ -583,7 +668,8 @@ class TableApp:
             return
         row = self.state.view_data[self.state.selected_row_index]
         self._pending_delete = True
-        self.logging_text = f"Delete? id={row['id']} (press 'd' again to confirm, Esc to cancel)"
+        kf = self.state.config.primary_key_field
+        self.logging_text = f"Delete? {kf}={row[kf]} (press 'd' again to confirm, Esc to cancel)"
         self.app.invalidate()
 
     def _confirm_delete(self):
@@ -592,7 +678,8 @@ class TableApp:
         self._pending_delete = False
         row = self.state.view_data[self.state.selected_row_index]
         res = self.state.delete(row)
-        self.logging_text = f"Delete {res}: id={row['id']}"
+        kf = self.state.config.primary_key_field
+        self.logging_text = f"Delete {res}: {kf}={row[kf]}"
         self._update_buffers()
         self.state.selected_row_index = min(self.state.selected_row_index, max(0, len(self.state.view_data) - 1))
         self._adjust_scroll()
