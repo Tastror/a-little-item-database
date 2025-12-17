@@ -509,11 +509,10 @@ class TableApp:
     ):
         """
         规则：
-        1) 变更后若还能命中 old_current_prikey，直接命中（同一条记录）。
-        2) 否则在 old_prikey_list 里，从 old_current_prikey 的位置往上找，
-        找到第一个在新 view 中存在的主键并聚焦。
-        3) 若上方没有，再往下找第一个存在的。
-        4) 再不行（新 view 为空）则 0。
+        1) 变更后若还能命中 old_current_prikey，直接命中
+        2) 否则往下找找到第一个在新 view 中存在的主键
+        3) 若下方没有，往上找第一个存在的
+        4) 否则为 0
         """
         if not self.state.view_data:
             self.state.selected_row_index = 0
@@ -533,11 +532,11 @@ class TableApp:
                 new_keys.add(cast(r[pf]))
             except Exception:
                 pass
-        for i in range(pos - 1, -1, -1):
+        for i in range(pos + 1, len(old_prikey_list)):
             k = old_prikey_list[i]
             if k in new_keys and self._focus_row_by_prikey(k):
                 return
-        for i in range(pos + 1, len(old_prikey_list)):
+        for i in range(pos - 1, -1, -1):
             k = old_prikey_list[i]
             if k in new_keys and self._focus_row_by_prikey(k):
                 return
