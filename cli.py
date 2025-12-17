@@ -552,26 +552,37 @@ class TableApp:
 
         @kb_nav.add("j")
         @kb_nav.add("down")
-        def _(event): self._move_cursor(1, 0)
+        def _(event):
+            self._cancel_pending_delete()
+            self._move_cursor(1, 0)
 
         @kb_nav.add("k")
         @kb_nav.add("up")
-        def _(event): self._move_cursor(-1, 0)
+        def _(event):
+            self._cancel_pending_delete()
+            self._move_cursor(-1, 0)
 
         @kb_nav.add("l")
         @kb_nav.add("right")
-        def _(event): self._move_cursor(0, 1)
+        def _(event):
+            self._cancel_pending_delete()
+            self._move_cursor(0, 1)
 
         @kb_nav.add("h")
         @kb_nav.add("left")
-        def _(event): self._move_cursor(0, -1)
+        def _(event):
+            self._cancel_pending_delete()
+            self._move_cursor(0, -1)
 
         @kb_nav.add("e")
         @kb_nav.add("enter")
-        def _(event): self._start_editing()
+        def _(event):
+            self._cancel_pending_delete()
+            self._start_editing()
 
         @kb_nav.add("f")
         def _(event):
+            self._cancel_pending_delete()
             if self.state.has_filter:
                 old_prikey_list = self._get_view_prikey_list()
                 keep_prikey = self._get_selected_prikey()
@@ -583,6 +594,7 @@ class TableApp:
 
         @kb_nav.add("s")
         def _(event):
+            self._cancel_pending_delete()
             old_prikey_list = self._get_view_prikey_list()
             keep_prikey = self._get_selected_prikey()
             self.state.sort_enabled = (self.state.sort_enabled + 1) % (len(self.state.config.sort_keys) + 1)
@@ -593,6 +605,7 @@ class TableApp:
 
         @kb_nav.add("r")
         def _(event):
+            self._cancel_pending_delete()
             old_prikey_list = self._get_view_prikey_list()
             keep_prikey = self._get_selected_prikey()
             self.state.load_data()
@@ -603,11 +616,12 @@ class TableApp:
         @kb_nav.add("a")
         @kb_nav.add("o")
         def _(event):
-            self._pending_delete = False
+            self._cancel_pending_delete()
             self._add_row()
 
         @kb_nav.add("i")
         def _(event):
+            self._cancel_pending_delete()
             self.state.show_id = not self.state.show_id
             pf = self.state.config.prikey_field
             if (not self.state.show_id) and (self.state.headers[self.state.selected_col_index] == pf):
@@ -617,15 +631,15 @@ class TableApp:
                         break
             self._update_layout()
 
+        @kb_nav.add("escape")
+        def _(event): self._cancel_pending_delete()
+
         @kb_nav.add("d")
         def _(event):
             if self._pending_delete:
                 self._confirm_delete()
             else:
                 self._request_delete()
-
-        @kb_nav.add("escape")
-        def _(event): self._cancel_pending_delete()
 
         kb_edit = KeyBindings()
 
@@ -760,7 +774,7 @@ class TableApp:
         row = self.state.view_data[self.state.selected_row_index]
         self._pending_delete = True
         pf = self.state.config.prikey_field
-        self.logging_text = f"Delete? {pf}={row[pf]} (press 'd' again to confirm, Esc to cancel)"
+        self.logging_text = f"Delete? {pf}={row[pf]} (press 'd' again to confirm, Esc or other operation to cancel)"
         self.app.invalidate()
 
     def _confirm_delete(self):
