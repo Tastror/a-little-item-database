@@ -92,7 +92,8 @@ class AppState:
         self.is_editing: bool = False
         self.show_id: bool = False
 
-        self.has_filter: bool = self.table_name.startswith("genshin")
+        self.filter_field_name: str = "open_day"
+        self.has_filter: bool
         self.filter_enabled: bool = False
         self.sort_enabled: int = 0
         self.filter_text: str = ""
@@ -110,6 +111,8 @@ class AppState:
             self.all_data = db.dquery_all()
 
         self.headers = db_headers[:]
+        self.has_filter = (self.filter_field_name in self.headers)
+
         for g in self.config.generated_fields:
             if g not in self.headers:
                 self.headers.append(g)
@@ -134,6 +137,13 @@ class AppState:
                     if h not in self.config.generated_fields:
                         self.selected_col_index = i
                         break
+
+        # 确保 selected_col_index 指向第一列“可见且可编辑”的真实列
+        visible = [h for h in self.headers if (self.show_id or h != self.config.primary_key_field)]
+        for h in visible:
+            if h not in self.config.generated_fields:
+                self.selected_col_index = self.headers.index(h)
+                break
 
         self.apply_filter_and_sort()
 
@@ -200,7 +210,6 @@ class AppState:
 
     def apply_filter_and_sort(self):
 
-        # TODO: now must have open_day, move to config
         if self.has_filter and self.filter_enabled:
             now = datetime.datetime.now()
             today_weekday = now.weekday()
@@ -211,7 +220,7 @@ class AppState:
                 key, value = None, None
             else:
                 today_key_index = (today_weekday % 3) + 1
-                key, value = "open_day", today_key_index
+                key, value = self.filter_field_name, today_key_index
             if key:
                 self.filter_text = f"Filter: {key}={value}"
                 self.view_data = [row for row in self.all_data if str(row.get(key, '')) == str(value)]
